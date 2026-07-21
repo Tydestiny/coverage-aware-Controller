@@ -1,0 +1,43 @@
+{
+  "batch_size": 256,
+  "format": "parquet_to_jsonl_manifest/v1",
+  "output": "data\\raw\\aftraj.jsonl",
+  "source_count": 2,
+  "sources": [
+    {
+      "columns": [
+        "conv_id",
+        "domain",
+        "task",
+        "gold_answer",
+        "num_turns",
+        "tools",
+        "turns"
+      ],
+      "path": "dataset\\AFTraj-2K\\aftraj_safe.parquet",
+      "row_count": 1162,
+      "schema": "conv_id: string\ndomain: string\ntask: string\ngold_answer: string\nnum_turns: int64\ntools: list<element: struct<description: string, name: string>>\n  child 0, element: struct<description: string, name: string>\n      child 0, description: string\n      child 1, name: string\nturns: list<element: struct<action: string, content: string, role: string, thought: string>>\n  child 0, element: struct<action: string, content: string, role: string, thought: string>\n      child 0, action: string\n      child 1, content: string\n      child 2, role: string\n      child 3, thought: string\n-- schema metadata --\npandas: '{\"index_columns\": [], \"column_indexes\": [], \"columns\": [{\"name\":' + 894",
+      "sha256": "cd16e0de24fa9f70f9832c7fee86ed2370d4d42deb8bdb6b97939c323aa8daa3"
+    },
+    {
+      "columns": [
+        "conv_id",
+        "domain",
+        "task",
+        "gold_answer",
+        "num_turns",
+        "tools",
+        "turns",
+        "mistake_step",
+        "mistake_agent",
+        "mistake_reason",
+        "unsafe_source"
+      ],
+      "path": "dataset\\AFTraj-2K\\aftraj_unsafe.parquet",
+      "row_count": 1114,
+      "schema": "conv_id: string\ndomain: string\ntask: string\ngold_answer: string\nnum_turns: int64\ntools: list<element: struct<description: string, name: string>>\n  child 0, element: struct<description: string, name: string>\n      child 0, description: string\n      child 1, name: string\nturns: list<element: struct<action: string, content: string, role: string, thought: string>>\n  child 0, element: struct<action: string, content: string, role: string, thought: string>\n      child 0, action: string\n      child 1, content: string\n      child 2, role: string\n      child 3, thought: string\nmistake_step: int64\nmistake_agent: string\nmistake_reason: string\nunsafe_source: string\n-- schema metadata --\npandas: '{\"index_columns\": [], \"column_indexes\": [], \"columns\": [{\"name\":' + 1395",
+      "sha256": "f19d407898ebf32b32a2e99600f49f53a358ac2831fe437da3dc2a9fe25f8f41"
+    }
+  ],
+  "total_rows": 2276
+}

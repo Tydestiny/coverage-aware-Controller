@@ -1,0 +1,3 @@
+{"conv_id":"safe-case","domain":"coding","task":"Return one","gold_answer":"1","tools":[],"turns":[{"actor":"assistant","content":"working","action":"run"},{"actor":"tool","observation":"1"}],"mistake_step":null}
+{"conv_id":"failure-case","domain":"coding","task":"Return one","gold_answer":"1","tools":[],"turns":[{"actor":"assistant","content":"working"},{"actor":"assistant","action":{"name":"run"}},{"actor":"tool","observation":"bad"}],"mistake_step":1,"mistake_agent":"assistant","mistake_reason":"provided","unsafe_source":"injected"}
+
