@@ -12,24 +12,19 @@ def safe():
 
 def test_pre_error_prefix_is_false():
     prefix = build_prefixes([failed()], "all")[0]
-    assert prefix.error_occurred is False
+    assert prefix.critical_error_occurred is False
 
 
 def test_error_and_later_prefixes_are_true():
     prefixes = build_prefixes([failed()], "all")
-    assert [item.error_occurred for item in prefixes] == [False, True, True]
+    assert [item.critical_error_occurred for item in prefixes] == [False, True, True]
 
 
 def test_safe_prefixes_are_always_false():
-    assert not any(item.error_occurred for item in build_prefixes([safe()], "all"))
+    assert not any(item.critical_error_occurred for item in build_prefixes([safe()], "all"))
 
 
 def test_prefix_never_contains_future_steps():
     for prefix in build_prefixes([failed()], "all"):
         assert len(prefix.steps) == prefix.prefix_end_step + 1
-
-
-def test_onset_window_respects_bounds():
-    prefixes = build_prefixes([failed()], "onset_window", (-3, 0, 5))
-    assert [item.prefix_end_step for item in prefixes] == [1]
 

@@ -1,107 +1,101 @@
-# Canonical Trajectory Schema
+# Canonical Trajectory Schema v1.1
 
-## 1. Purpose
+`CanonicalTrajectory` is the storage and evaluation object. Future Compactors and Verifiers must receive only the separate `ModelInputView` from `src/agent_error_compaction/views.py`.
 
-The canonical schema is the stable data boundary between raw AFTraj-2K records and later compaction, verification, or modeling experiments. It preserves source evidence and labels while making trajectory boundaries, family membership, split membership, and prefix semantics explicit.
+## Top-level structure
 
-The schema is implemented with Python standard-library `dataclasses` in `src/agent_error_compaction/schemas.py`. Each dataclass exposes `to_dict()` and can be serialized as one JSON object per JSONL line.
+```json
+{
+  "schema_version": "1.1",
+  "trajectory_id": "...",
+  "trajectory_family_id": "...",
+  "source": {"dataset": "AFTraj-2K", "split": "train", "record_id": "..."},
+  "task": {"task_id": null, "instruction": "...", "gold_answer": "..."},
+  "environment": {"domain": "math", "tools": []},
+  "steps": [],
+  "outcome": {"status": "success", "score": null, "termination_reason": null, "raw": "success"},
+  "annotations": {"primary_error": null, "error_events": []},
+  "derived_annotations": {"first_error_step": null, "earliest_detectable_step": null, "evidence_steps": [], "provenance": null},
+  "metadata": {}
+}
+```
 
-## 2. CanonicalTrajectory
+`derived_annotations` remains empty during preprocessing. No first-error, earliest-detectable, evidence, or LLM-derived label is generated.
 
-Each canonical JSONL line is a `CanonicalTrajectory` object.
+## PrimaryErrorAnnotation
 
-| Field | Type | Meaning |
-|---|---|---|
-| `trajectory_id` | string | Stable source identifier, mapped from `conv_id`. |
-| `trajectory_family_id` | string or null | Group identifier used for leakage-safe splitting. |
-| `source_dataset` | string | Source dataset name, currently `AFTraj-2K`. |
-| `source_split` | string or null | Split assigned by the group splitter. |
-| `domain` | string or null | Original domain, such as `math`, `coding`, or `agentic`. |
-| `task_id` | string or null | Optional source task identifier. |
-| `task` | JSON value | Original task without semantic rewriting. |
-| `gold_answer` | JSON value | Original reference answer. |
-| `outcome` | `success` or `failure` | Normalized trajectory outcome. |
-| `tools` | JSON value | Original tool declarations. |
-| `steps` | array | Exactly one `CanonicalStep` for every original turn. |
-| `labels` | object | Source error annotations and canonical error position. |
-| `metadata` | object | Conversion provenance and invariant checks. |
+`annotations.primary_error` is null for successful trajectories. For AFTraj failures it contains:
 
-## 3. CanonicalStep
+| Field | Meaning |
+|---|---|
+| `step_index` | Canonical 0-based `mistake_step`. |
+| `source_step_index` | Original source step index. |
+| `actor_id` | Original `mistake_agent`. |
+| `reason` | Original `mistake_reason`. |
+| `error_type_original` | Original error type, if supplied. |
+| `error_type_unified` | Reserved; currently null. |
+| `label_semantics` | Always `decisive_mistake_step`. |
+| `annotation_source` | Always `dataset_author`. |
+| `annotation_method` | `injected` becomes `controlled_injection`; `diagnosed` becomes `post_hoc_diagnosis`. |
+| `confidence` | Currently null. |
 
-`CanonicalStep` contains normalized access fields and the complete original turn.
+The name `error_onset_step` is not used in v1.1. The current annotation does not claim to be the first or earliest error.
 
-| Field | Type | Meaning |
-|---|---|---|
-| `step_index` | integer | Canonical 0-based position, continuous from zero. |
-| `source_step_index` | integer | Original source position. |
-| `source_step_id` | string or null | Explicit source step or turn ID when present. |
-| `actor` | string or null | Source actor; falls back to `role` when no actor field exists. |
-| `role` | string or null | Original source role. |
-| `event_type` | string | Explicit type, or conservative message/action/observation classification. Empty action strings are not actions. |
-| `content` | string or null | Original content in a JSON-safe representation. |
-| `thought` | string or null | Original thought or reasoning field. |
-| `action` | JSON value | Original action, including string, object, or null values. |
-| `observation` | JSON value | Explicit observation; environment content is used only if no explicit observation exists. |
-| `raw_step` | JSON object | Complete original turn, preserved losslessly. |
-| `token_count` | integer or null | Source token count when supplied. |
+## CanonicalStep
 
-The one-turn/one-step invariant is checked using both `metadata.num_steps` and `metadata.source_turn_count`.
+Each original turn maps to exactly one step. The following source-preservation fields remain explicit:
 
-## 4. TrajectoryLabels
+| Field | Meaning |
+|---|---|
+| `step_index` | Continuous canonical 0-based index. |
+| `source_step_index` | Original source index. |
+| `source_step_id` | Original step ID, if present. |
+| `event_type` | Explicit or conservative source-derived event type. |
+| `content` | Original content. |
+| `raw_step` | Complete original turn, unchanged. |
+| `token_count` | Source token count, if present. |
 
-| Field | Type | Meaning |
-|---|---|---|
-| `is_failure` | boolean | Must agree with `outcome`. |
-| `error_onset_step` | integer or null | Canonical 0-based error position. For AFTraj-2K, this equals the source `mistake_step`. |
-| `source_error_onset_step` | integer or null | Original `mistake_step`, never overwritten. |
-| `responsible_actor` | string or null | Mapped from `mistake_agent`. |
-| `error_type_original` | string or null | Original error type if supplied. |
-| `error_type_unified` | string or null | Reserved for a later taxonomy; no inference is performed. |
-| `error_reason` | string or null | Original `mistake_reason`, not a generated diagnosis. |
-| `label_source` | string or null | Label origin. Safe records use `safe`; unsafe records use source `unsafe_source`. |
-| `unsafe_source` | string or null | Original unsafe source; safe records are normalized to `safe`. |
+The normalized interaction fields are:
 
-## 5. PrefixSample
+```json
+{
+  "actor": {"id": "MathSolver", "type": "agent"},
+  "message_role": "assistant",
+  "reasoning": "...",
+  "tool_call": {"call_id": null, "tool_name": null, "arguments": null, "raw": null},
+  "tool_result": {"call_id": null, "content": null, "status": null, "error_code": null, "raw": null},
+  "decision_step_index": 3
+}
+```
 
-`PrefixSample` is used for later prefix-based experiments.
+Actor type is assigned only from explicit role/actor values: `environment`, `tool`, `user`, a concrete agent name as `agent`, otherwise `unknown`. AFTraj sets `decision_step_index == step_index`. Action and observation values are always retained in `tool_call.raw` and `tool_result.raw`; unknown structured fields remain null.
 
-| Field | Type | Meaning |
-|---|---|---|
-| `prefix_id` | string | Deterministic trajectory/end-step identifier. |
-| `trajectory_id` | string | Parent trajectory. |
-| `trajectory_family_id` | string or null | Parent family. |
-| `source_split` | string or null | Parent split. |
-| `prefix_end_step` | integer | Inclusive canonical endpoint. |
-| `steps` | array | Exactly `trajectory.steps[:prefix_end_step + 1]`; no future step is allowed. |
-| `error_occurred` | boolean | True when a failure prefix reaches or passes the onset; always false for safe prefixes. |
-| `distance_to_error_onset` | integer or null | `prefix_end_step - error_onset_step`; null for safe prefixes. |
-| `metadata` | object | Prefix mode and fixed seed provenance. |
+## Outcome
 
-## 6. Family and split design
+The old string outcome is migrated to an object:
 
-Family assignment happens before splitting. If a source family linkage is available, it is preferred. Otherwise a deterministic hash is computed from:
+```json
+{"status": "failure", "score": null, "termination_reason": null, "raw": "failure"}
+```
 
-- normalized task;
-- normalized gold answer;
-- domain;
-- normalized text of the first three raw steps.
+Supported status values are `success`, `failure`, `partial_success`, `timeout`, `aborted`, and `unknown`; current AFTraj records use only `success` and `failure`.
 
-Normalization only strips leading/trailing whitespace, collapses consecutive whitespace, and lowercases text. No semantic rewriting is performed.
+## PrefixSample
 
-Train, validation, and test are assigned by family group with a fixed random seed. A strict validation rejects any family appearing in more than one split.
+Prefix samples contain `prefix_id`, trajectory/family identifiers, `source_split`, `prefix_end_step`, the prefix steps, `critical_error_occurred`, `critical_error_step`, `distance_to_critical_error`, `responsible_actor`, and metadata.
 
-## 7. Validation invariants
+For a failure, `critical_error_step` is `annotations.primary_error.step_index` and:
 
-The validator rejects records when:
+```python
+critical_error_occurred = prefix_end_step >= critical_error_step
+distance_to_critical_error = prefix_end_step - critical_error_step
+```
 
-- `trajectory_id` is empty or `steps` is empty;
-- `step_index` is not continuous from zero;
-- canonical and source turn counts differ;
-- `outcome` and labels disagree;
-- a failure has no error onset, or a success has one;
-- the error onset is outside the trajectory;
-- `error_onset_step` does not equal `source_error_onset_step` for the confirmed 0-based AFTraj-2K data;
-- a family appears in more than one split.
+For a safe trajectory, `critical_error_step` and distance are null and `critical_error_occurred` is always false. Prefix steps are exactly `trajectory.steps[:prefix_end_step + 1]`.
 
-The preprocessing stage does not infer error reasons, rewrite human labels, merge turns, split turns, or use future steps to construct a current prefix.
+## Validation and migration
+
+Validation rejects missing or non-continuous step indices, invalid outcomes, failure records without `primary_error`, success records with `primary_error`, out-of-range primary error positions, non-empty derived annotations, and mismatched source/canonical step counts.
+
+Use `scripts/migrate_schema_v1_to_v1_1.py` to migrate the existing canonical JSONL. Use `scripts/check_migration_consistency.py` to compare trajectory order, IDs, family/split values, source indices, raw steps, critical error positions, prefix IDs, and boolean prefix labels before and after migration. The migration does not read or rewrite Parquet.
 

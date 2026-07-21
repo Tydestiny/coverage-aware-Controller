@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--conversion-manifest", type=Path, required=True)
     parser.add_argument("--inspection", type=Path)
     parser.add_argument("--dataset-report", type=Path, required=True)
-    parser.add_argument("--mistake-step-base", type=int, choices=(0, 1), required=True)
+    parser.add_argument("--mistake-step-base", type=int, choices=(0,), default=0)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     inspection = _load_json(args.inspection) if args.inspection else None

@@ -14,7 +14,8 @@ SPLIT_RATIOS = {"train": 0.60, "validation": 0.20, "test": 0.20}
 
 def _stratum(trajectory: CanonicalTrajectory) -> tuple[str, str, str]:
     """Return the coarse attributes used to approximate balanced assignment."""
-    return (trajectory.domain or "<missing>", trajectory.outcome, trajectory.labels.unsafe_source or "<missing>")
+    annotation_method = trajectory.annotations.primary_error.annotation_method if trajectory.annotations.primary_error else "safe"
+    return (trajectory.environment.domain or "<missing>", trajectory.outcome.status, annotation_method or "<missing>")
 
 
 def build_group_splits(trajectories: Iterable[CanonicalTrajectory], seed: int = 42) -> dict[str, list[CanonicalTrajectory]]:
@@ -66,4 +67,3 @@ def assert_no_family_leakage(splits: dict[str, list[CanonicalTrajectory]]) -> No
             previous = seen.setdefault(family, split_name)
             if previous != split_name:
                 raise ValueError(f"family {family} leaks between {previous} and {split_name}")
-

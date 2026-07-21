@@ -1,6 +1,33 @@
 """Utilities for diagnosis-aware agent trajectory preprocessing."""
 
-from .schemas import CanonicalStep, CanonicalTrajectory, PrefixSample, TrajectoryLabels
+from .schemas import (
+    ActorInfo,
+    CanonicalStep,
+    CanonicalTrajectory,
+    DerivedAnnotations,
+    EnvironmentInfo,
+    ErrorAnnotations,
+    OutcomeInfo,
+    PrefixSample,
+    PrimaryErrorAnnotation,
+    SourceInfo,
+    TaskInfo,
+    ToolCall,
+    ToolResult,
+)
 
-__all__ = ["CanonicalStep", "CanonicalTrajectory", "PrefixSample", "TrajectoryLabels"]
-
+__all__ = [
+    "ActorInfo",
+    "CanonicalStep",
+    "CanonicalTrajectory",
+    "DerivedAnnotations",
+    "EnvironmentInfo",
+    "ErrorAnnotations",
+    "OutcomeInfo",
+    "PrefixSample",
+    "PrimaryErrorAnnotation",
+    "SourceInfo",
+    "TaskInfo",
+    "ToolCall",
+    "ToolResult",
+]

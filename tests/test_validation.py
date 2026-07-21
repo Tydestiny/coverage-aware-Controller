@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from agent_error_compaction.adapters.aftraj import AFTrajAdapter
+from agent_error_compaction.schemas import ErrorAnnotations, PrimaryErrorAnnotation
 from agent_error_compaction.validation import TrajectoryValidationError, validate_trajectory
 
 
@@ -11,20 +12,21 @@ def source(mistake_step=0):
 
 
 def test_rejects_error_step_out_of_range():
-    with pytest.raises(TrajectoryValidationError, match="error_onset_step"):
+    with pytest.raises(TrajectoryValidationError, match="primary_error.step_index"):
         validate_trajectory(AFTrajAdapter().convert_record(source(2)))
 
 
-def test_rejects_success_with_error_onset():
+def test_rejects_success_with_primary_error():
     trajectory = AFTrajAdapter().convert_record(source(None))
-    bad = replace(trajectory, labels=replace(trajectory.labels, error_onset_step=0))
+    primary = PrimaryErrorAnnotation(0, 0, "agent", "reason", None, None, "decisive_mistake_step", "dataset_author", None, None)
+    bad = replace(trajectory, annotations=ErrorAnnotations(primary, []))
     with pytest.raises(TrajectoryValidationError, match="success cannot"):
         validate_trajectory(bad)
 
 
-def test_rejects_failure_without_error_onset():
+def test_rejects_failure_without_primary_error():
     trajectory = AFTrajAdapter().convert_record(source(0))
-    bad = replace(trajectory, labels=replace(trajectory.labels, error_onset_step=None))
+    bad = replace(trajectory, annotations=ErrorAnnotations(None, []))
     with pytest.raises(TrajectoryValidationError, match="failure requires"):
         validate_trajectory(bad)
 

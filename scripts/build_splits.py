@@ -29,7 +29,7 @@ def main() -> None:
         with (args.output_dir / f"{name}.jsonl").open("w", encoding="utf-8") as handle:
             for value in values:
                 payload = value.to_dict()
-                payload["source_split"] = name
+                payload["source"]["split"] = name
                 handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
         (args.manifest_dir / f"{name}_ids.json").write_text(json.dumps([value.trajectory_id for value in values], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({name: len(values) for name, values in splits.items()}, sort_keys=True))
@@ -37,4 +37,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

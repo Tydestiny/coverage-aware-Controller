@@ -8,8 +8,8 @@ from typing import Any
 
 def build_audit_markdown(conversion_manifest: dict[str, Any], inspection: dict[str, Any] | None, dataset_report: dict[str, Any], mistake_step_base: int) -> str:
     """Build a Markdown audit from deterministic pipeline artifacts."""
-    if mistake_step_base not in {0, 1}:
-        raise ValueError("mistake_step_base must be 0 or 1")
+    if mistake_step_base != 0:
+        raise ValueError("AFTraj-2K mistake_step_base is fixed at 0")
     inspection = inspection or {}
     mistake = inspection.get("mistake_step", {})
     chosen_key = "out_of_bounds_if_zero_based" if mistake_step_base == 0 else "out_of_bounds_if_one_based"
@@ -70,13 +70,13 @@ def build_audit_markdown(conversion_manifest: dict[str, Any], inspection: dict[s
                 {
                     "outcome": dataset_report.get("outcome_distribution", {}),
                     "domain": dataset_report.get("domain_distribution", {}),
-                    "unsafe_source": dataset_report.get("unsafe_source_distribution", {}),
+                    "annotation_method": dataset_report.get("annotation_method_distribution", {}),
                     "trajectory_length": dataset_report.get("trajectory_length", {}),
-                    "error_onset_absolute": dataset_report.get("error_onset_absolute_distribution", {}),
+                    "critical_error_absolute": dataset_report.get("critical_error_absolute_distribution", {}),
                     "responsible_actor": dataset_report.get("responsible_actor_distribution", {}),
                     "splits": dataset_report.get("splits", {}),
-                    "error_occurred": dataset_report.get("error_occurred_distribution", {}),
-                    "distance_to_error_onset": dataset_report.get("distance_to_error_onset_distribution", {}),
+                    "critical_error_occurred": dataset_report.get("critical_error_occurred_distribution", {}),
+                    "distance_to_critical_error": dataset_report.get("distance_to_critical_error_distribution", {}),
                 },
                 ensure_ascii=False,
                 indent=2,

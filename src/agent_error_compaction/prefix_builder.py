@@ -1,8 +1,7 @@
-"""Causally valid trajectory-prefix construction."""
+"""Causally valid trajectory-prefix construction for schema v1.1."""
 
 from __future__ import annotations
 
-from collections import defaultdict
 import random
 
 from .schemas import CanonicalTrajectory, PrefixSample
@@ -12,36 +11,39 @@ DEFAULT_ONSET_WINDOW = (-3, -2, -1, 0, 1, 2, 3)
 
 def _sample(trajectory: CanonicalTrajectory, end_step: int, mode: str, seed: int) -> PrefixSample:
     """Build one prefix ending at an inclusive canonical step index."""
-    onset = trajectory.labels.error_onset_step
-    occurred = onset is not None and end_step >= onset
-    distance = end_step - onset if onset is not None else None
+    primary = trajectory.annotations.primary_error
+    critical_step = primary.step_index if primary is not None else None
+    occurred = critical_step is not None and end_step >= critical_step
+    distance = end_step - critical_step if critical_step is not None else None
     return PrefixSample(
         prefix_id=f"{trajectory.trajectory_id}:end:{end_step}",
         trajectory_id=trajectory.trajectory_id,
         trajectory_family_id=trajectory.trajectory_family_id,
-        source_split=trajectory.source_split,
+        source_split=trajectory.source.split,
         prefix_end_step=end_step,
         steps=trajectory.steps[: end_step + 1],
-        error_occurred=occurred,
-        distance_to_error_onset=distance,
+        critical_error_occurred=occurred,
+        critical_error_step=critical_step,
+        distance_to_critical_error=distance,
+        responsible_actor=primary.actor_id if primary is not None else None,
         metadata={"mode": mode, "seed": seed},
     )
 
 
 def build_prefixes(trajectories: list[CanonicalTrajectory], mode: str = "all", window: tuple[int, ...] = DEFAULT_ONSET_WINDOW, seed: int = 42) -> list[PrefixSample]:
-    """Create all prefixes or an onset-window subset without exposing future steps."""
+    """Create all prefixes or a critical-error window without future steps."""
     if mode not in {"all", "onset_window"}:
         raise ValueError("mode must be 'all' or 'onset_window'")
     if mode == "all":
         return [_sample(trajectory, end, mode, seed) for trajectory in trajectories for end in range(len(trajectory.steps))]
-    failures = [item for item in trajectories if item.labels.is_failure]
-    safe = [item for item in trajectories if not item.labels.is_failure]
+    failures = [item for item in trajectories if item.annotations.primary_error is not None]
+    safe = [item for item in trajectories if item.annotations.primary_error is None]
     samples: list[PrefixSample] = []
     relative_targets: list[float] = []
     for trajectory in failures:
-        assert trajectory.labels.error_onset_step is not None
+        assert trajectory.annotations.primary_error is not None
         for distance in window:
-            end = trajectory.labels.error_onset_step + distance
+            end = trajectory.annotations.primary_error.step_index + distance
             if 0 <= end < len(trajectory.steps):
                 samples.append(_sample(trajectory, end, mode, seed))
                 relative_targets.append((end + 1) / len(trajectory.steps))

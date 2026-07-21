@@ -42,7 +42,7 @@ def assign_family(trajectory: CanonicalTrajectory) -> CanonicalTrajectory:
         metadata["family_builder"] = {"method": "explicit_source_link", "fields": ["trajectory_family_id", "parent_trajectory_id", "parent_id", "related_trajectory_id", "family_id"]}
         return replace(trajectory, trajectory_family_id=explicit, metadata=metadata)
     first_steps = [normalize_text(step.raw_step) for step in trajectory.steps[:3]]
-    material = {"task": normalize_text(trajectory.task), "gold_answer": normalize_text(trajectory.gold_answer), "domain": normalize_text(trajectory.domain), "first_three_raw_steps": first_steps}
+    material = {"task": normalize_text(trajectory.task.instruction), "gold_answer": normalize_text(trajectory.task.gold_answer), "domain": normalize_text(trajectory.environment.domain), "first_three_raw_steps": first_steps}
     encoded = json.dumps(material, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     family_id = "hash:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
     metadata["family_builder"] = {"method": "normalized_candidate_hash", "normalization": "strip, collapse whitespace, lowercase", "hash_fields": list(material)}
@@ -52,4 +52,3 @@ def assign_family(trajectory: CanonicalTrajectory) -> CanonicalTrajectory:
 def assign_families(trajectories: list[CanonicalTrajectory]) -> list[CanonicalTrajectory]:
     """Assign a family to every supplied canonical trajectory."""
     return [assign_family(trajectory) for trajectory in trajectories]
-
