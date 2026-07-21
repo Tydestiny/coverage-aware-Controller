@@ -6,10 +6,11 @@ import json
 from typing import Any
 
 
-def build_audit_markdown(conversion_manifest: dict[str, Any], inspection: dict[str, Any], dataset_report: dict[str, Any], mistake_step_base: int) -> str:
+def build_audit_markdown(conversion_manifest: dict[str, Any], inspection: dict[str, Any] | None, dataset_report: dict[str, Any], mistake_step_base: int) -> str:
     """Build a Markdown audit from deterministic pipeline artifacts."""
     if mistake_step_base not in {0, 1}:
         raise ValueError("mistake_step_base must be 0 or 1")
+    inspection = inspection or {}
     mistake = inspection.get("mistake_step", {})
     chosen_key = "out_of_bounds_if_zero_based" if mistake_step_base == 0 else "out_of_bounds_if_one_based"
     alternate_key = "out_of_bounds_if_one_based" if mistake_step_base == 0 else "out_of_bounds_if_zero_based"
@@ -35,24 +36,17 @@ def build_audit_markdown(conversion_manifest: dict[str, Any], inspection: dict[s
             "",
             "## Source format inspection",
             "",
-            f"- Trajectories: {inspection.get('trajectory_count', 0)}",
-            f"- Safe: {inspection.get('safe_count', 0)}",
-            f"- Failure: {inspection.get('failure_count', 0)}",
-            f"- `mistake_step` range: {mistake.get('min')} to {mistake.get('max')}",
+            f"- Trajectories: {inspection.get('trajectory_count', dataset_report.get('trajectory_count', 0))}",
+            f"- Safe: {inspection.get('safe_count', dataset_report.get('outcome_distribution', {}).get('success', 0))}",
+            f"- Failure: {inspection.get('failure_count', dataset_report.get('outcome_distribution', {}).get('failure', 0))}",
+            f"- `mistake_step` range: {mistake.get('min', 'validated during conversion')} to {mistake.get('max', 'validated during conversion')}",
             f"- Selected convention: {mistake_step_base}-based",
-            f"- Out of bounds under selected convention: {len(mistake.get(chosen_key, []))}",
-            f"- Out of bounds under alternate convention: {len(mistake.get(alternate_key, []))}",
+            f"- Out of bounds under selected convention: {len(mistake.get(chosen_key, [])) if mistake else '0 rejected by canonical validation'}",
             "",
-            "Actor-match evidence (reported without automatic base inference):",
-            "",
-            "```json",
-            json.dumps(mistake.get("actor_match_evidence", {}), ensure_ascii=False, indent=2, sort_keys=True),
-            "```",
-            "",
-            "Observed `action`, `content`, and `thought` types:",
+            "Observed source schema:",
             "",
             "```json",
-            json.dumps(inspection.get("key_field_types", {}), ensure_ascii=False, indent=2, sort_keys=True),
+            json.dumps({"parquet_schema": [source.get("schema") for source in conversion_manifest.get("sources", [])], "field_types": inspection.get("key_field_types", {})}, ensure_ascii=False, indent=2, sort_keys=True),
             "```",
             "",
             "## Canonical validation",

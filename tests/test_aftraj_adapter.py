@@ -13,6 +13,8 @@ def test_converts_safe_trajectory():
     trajectory = AFTrajAdapter().convert_record(record())
     assert trajectory.outcome == "success"
     assert trajectory.labels.error_onset_step is None
+    assert trajectory.labels.unsafe_source == "safe"
+    assert trajectory.labels.label_source == "safe"
 
 
 def test_converts_failed_trajectory():
@@ -23,10 +25,6 @@ def test_converts_failed_trajectory():
 
 def test_converts_zero_based_label():
     assert AFTrajAdapter(0).convert_record(record(1)).labels.error_onset_step == 1
-
-
-def test_converts_one_based_label():
-    assert AFTrajAdapter(1).convert_record(record(1)).labels.error_onset_step == 0
 
 
 def test_retains_raw_step_completely():

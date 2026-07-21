@@ -95,8 +95,8 @@ class AFTrajAdapter(BaseTrajectoryAdapter):
 
     def __init__(self, mistake_step_base: int = 0, source_dataset: str = "AFTraj-2K") -> None:
         """Configure the manually confirmed source indexing convention."""
-        if mistake_step_base not in {0, 1}:
-            raise ValueError("mistake_step_base must be 0 or 1")
+        if mistake_step_base != 0:
+            raise ValueError("AFTraj-2K mistake_step_base is fixed at 0")
         self.mistake_step_base = mistake_step_base
         self.source_dataset = source_dataset
 
@@ -131,7 +131,7 @@ class AFTrajAdapter(BaseTrajectoryAdapter):
         if not is_failure and source_onset is not None:
             raise ValueError(f"trajectory {trajectory_id}: success outcome conflicts with mistake_step")
         onset = source_onset - self.mistake_step_base if source_onset is not None else None
-        unsafe_source = _as_text(record.get("unsafe_source"), "unsafe_source")
+        unsafe_source = _as_text(record.get("unsafe_source"), "unsafe_source") or ("safe" if not is_failure else None)
         labels = TrajectoryLabels(is_failure, onset, source_onset, _as_text(record.get("mistake_agent"), "mistake_agent"), _as_text(record.get("mistake_type"), "mistake_type"), None, _as_text(record.get("mistake_reason"), "mistake_reason"), unsafe_source, unsafe_source)
         return CanonicalTrajectory(
             trajectory_id=trajectory_id,

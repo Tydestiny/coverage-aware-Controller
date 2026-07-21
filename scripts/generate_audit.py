@@ -23,12 +23,13 @@ def main() -> None:
     """Combine conversion, inspection, and dataset reports into Markdown."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--conversion-manifest", type=Path, required=True)
-    parser.add_argument("--inspection", type=Path, required=True)
+    parser.add_argument("--inspection", type=Path)
     parser.add_argument("--dataset-report", type=Path, required=True)
     parser.add_argument("--mistake-step-base", type=int, choices=(0, 1), required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    markdown = build_audit_markdown(_load_json(args.conversion_manifest), _load_json(args.inspection), _load_json(args.dataset_report), args.mistake_step_base)
+    inspection = _load_json(args.inspection) if args.inspection else None
+    markdown = build_audit_markdown(_load_json(args.conversion_manifest), inspection, _load_json(args.dataset_report), args.mistake_step_base)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(markdown, encoding="utf-8")
     print(f"saved={args.output}")
