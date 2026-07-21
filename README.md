@@ -25,34 +25,34 @@ python scripts/parquet_to_jsonl.py \
 
 python scripts/convert_aftraj.py \
   --input data/raw/aftraj.jsonl \
-  --output data/processed/aftraj_all.jsonl \
-  --rejected data/processed/rejected_records.jsonl \
+    --output data/processed/v1_1/aftraj_all.jsonl \
+    --rejected data/processed/v1_1/rejected_records.jsonl \
   --mistake-step-base 0
 
 python scripts/build_splits.py \
-  --input data/processed/aftraj_all.jsonl \
-  --output-dir data/processed \
-  --manifest-dir data/manifests \
+    --input data/processed/v1_1/aftraj_all.jsonl \
+    --output-dir data/processed/v1_1 \
+    --manifest-dir data/manifests/v1_1 \
   --seed 42
 
 python scripts/build_prefixes.py \
-  --input-dir data/processed \
-  --output-dir data/processed/prefixes \
+    --input-dir data/processed/v1_1 \
+    --output-dir data/processed/v1_1/prefixes \
   --mode onset_window \
   --window=-3,-2,-1,0,1,2,3 \
   --seed 42
 
 python scripts/generate_report.py \
-  --trajectory-dir data/processed \
-  --prefix-dir data/processed/prefixes \
-  --output-json data/processed/dataset_report.json \
-  --output-md data/processed/dataset_report.md
+    --trajectory-dir data/processed/v1_1 \
+    --prefix-dir data/processed/v1_1/prefixes \
+    --output-json data/processed/v1_1/dataset_report.json \
+    --output-md data/processed/v1_1/dataset_report.md
 
 python scripts/generate_audit.py \
   --conversion-manifest data/manifests/parquet_conversion.json \
-  --dataset-report data/processed/dataset_report.json \
+    --dataset-report data/processed/v1_1/dataset_report.json \
   --mistake-step-base 0 \
-  --output data/processed/aftraj_data_audit.md
+    --output data/processed/v1_1/aftraj_data_audit.md
 ```
 
 Canonical conversion preserves exactly one `CanonicalStep` per source turn, keeps every `raw_step`, uses the confirmed 0-based AFTraj label, assigns families before splitting, and creates every prefix with `steps[:prefix_end_step + 1]` only.
@@ -63,13 +63,13 @@ Migrate an existing v1.0 canonical JSONL without reading Parquet:
 
 ```bash
 python scripts/migrate_schema_v1_to_v1_1.py \
-  --input data/processed/aftraj_all.jsonl \
-  --output data/processed/aftraj_all_v1_1.jsonl \
-  --rejected data/processed/migration_rejected_records.jsonl \
-  --stats-output data/manifests/schema_migration_v1_1.json
+  --input data/processed/v1_0/aftraj_all.jsonl \
+  --output data/processed/v1_1/aftraj_all.jsonl \
+  --rejected data/processed/v1_1/rejected_records.jsonl \
+  --stats-output data/manifests/v1_1/schema_migration_v1_1.json
 
 python scripts/build_splits.py \
-  --input data/processed/aftraj_all_v1_1.jsonl \
+  --input data/processed/v1_1/aftraj_all.jsonl \
   --output-dir data/processed/v1_1 \
   --manifest-dir data/manifests/v1_1 \
   --seed 42
@@ -82,12 +82,20 @@ python scripts/build_prefixes.py \
   --seed 42
 
 python scripts/check_migration_consistency.py \
-  --before data/processed/aftraj_all.jsonl \
-  --after data/processed/aftraj_all_v1_1.jsonl \
-  --before-prefix-dir data/processed/prefixes \
+  --before data/processed/v1_0/aftraj_all.jsonl \
+  --after data/processed/v1_1/aftraj_all.jsonl \
+  --before-prefix-dir data/processed/v1_0/prefixes \
   --after-prefix-dir data/processed/v1_1/prefixes \
-  --output data/manifests/schema_migration_consistency.json
-```
+  --output data/manifests/v1_1/migration_consistency_v1_1.json
+  ```
+
+## Processed data layout
+
+`data/processed/v1_1/` is the current canonical output and contains the
+versioned trajectory JSONL, split files, prefixes, report, and audit document.
+The previous representation is retained only under `data/processed/v1_0/` for
+migration comparison and reproducibility. The processed-data root intentionally
+contains no trajectory files.
 
 See [docs/canonical_schema.md](docs/canonical_schema.md) for the v1.1 field contract. Old v1.0 labels are migration input only; new generated JSONL uses `annotations.primary_error` and the structured outcome/step schemas.
 
