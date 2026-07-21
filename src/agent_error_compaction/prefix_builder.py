@@ -12,14 +12,14 @@ DEFAULT_ONSET_WINDOW = (-3, -2, -1, 0, 1, 2, 3)
 def _sample(trajectory: CanonicalTrajectory, end_step: int, mode: str, seed: int) -> PrefixSample:
     """Build one prefix ending at an inclusive canonical step index."""
     primary = trajectory.annotations.primary_error
-    critical_step = primary.step_index if primary is not None else None
+    critical_step = primary.step_index if primary is not None and primary.alignment_status == "exact" else None
     occurred = critical_step is not None and end_step >= critical_step
     distance = end_step - critical_step if critical_step is not None else None
     return PrefixSample(
         prefix_id=f"{trajectory.trajectory_id}:end:{end_step}",
         trajectory_id=trajectory.trajectory_id,
         trajectory_family_id=trajectory.trajectory_family_id,
-        source_split=trajectory.source.split,
+        experiment_split=trajectory.experiment_split,
         prefix_end_step=end_step,
         steps=trajectory.steps[: end_step + 1],
         critical_error_occurred=occurred,
@@ -36,7 +36,7 @@ def build_prefixes(trajectories: list[CanonicalTrajectory], mode: str = "all", w
         raise ValueError("mode must be 'all' or 'onset_window'")
     if mode == "all":
         return [_sample(trajectory, end, mode, seed) for trajectory in trajectories for end in range(len(trajectory.steps))]
-    failures = [item for item in trajectories if item.annotations.primary_error is not None]
+    failures = [item for item in trajectories if item.annotations.primary_error is not None and item.annotations.primary_error.alignment_status == "exact"]
     safe = [item for item in trajectories if item.annotations.primary_error is None]
     samples: list[PrefixSample] = []
     relative_targets: list[float] = []
@@ -55,4 +55,3 @@ def build_prefixes(trajectories: list[CanonicalTrajectory], mode: str = "all", w
             end = min(len(trajectory.steps) - 1, max(0, round(target * len(trajectory.steps) - 1)))
             samples.append(_sample(trajectory, end, mode, seed))
     return samples
-

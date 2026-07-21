@@ -2,6 +2,7 @@
 
 from .schemas import (
     ActorInfo,
+    CanonicalEvent,
     CanonicalStep,
     CanonicalTrajectory,
     DerivedAnnotations,
@@ -14,10 +15,13 @@ from .schemas import (
     TaskInfo,
     ToolCall,
     ToolResult,
+    StepSpan,
+    DerivedField,
 )
 
 __all__ = [
     "ActorInfo",
+    "CanonicalEvent",
     "CanonicalStep",
     "CanonicalTrajectory",
     "DerivedAnnotations",
@@ -30,4 +34,6 @@ __all__ = [
     "TaskInfo",
     "ToolCall",
     "ToolResult",
+    "StepSpan",
+    "DerivedField",
 ]

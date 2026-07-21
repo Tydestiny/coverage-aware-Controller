@@ -4,7 +4,7 @@ import pytest
 
 from agent_error_compaction.adapters.aftraj import AFTrajAdapter
 from agent_error_compaction.schemas import ErrorAnnotations, PrimaryErrorAnnotation
-from agent_error_compaction.validation import TrajectoryValidationError, validate_trajectory
+from agent_error_compaction.validation import AFTrajValidator, CanonicalValidator, TrajectoryValidationError, validate_trajectory
 
 
 def source(mistake_step=0):
@@ -19,16 +19,22 @@ def test_rejects_error_step_out_of_range():
 def test_rejects_success_with_primary_error():
     trajectory = AFTrajAdapter().convert_record(source(None))
     primary = PrimaryErrorAnnotation(0, 0, "agent", "reason", None, None, "decisive_mistake_step", "dataset_author", None, None)
-    bad = replace(trajectory, annotations=ErrorAnnotations(primary, []))
+    bad = replace(trajectory, annotations=ErrorAnnotations("source_provided", primary, []))
     with pytest.raises(TrajectoryValidationError, match="success cannot"):
-        validate_trajectory(bad)
+        AFTrajValidator().validate(bad)
 
 
 def test_rejects_failure_without_primary_error():
     trajectory = AFTrajAdapter().convert_record(source(0))
-    bad = replace(trajectory, annotations=ErrorAnnotations(None, []))
+    bad = replace(trajectory, annotations=ErrorAnnotations("source_provided", None, []))
     with pytest.raises(TrajectoryValidationError, match="failure requires"):
-        validate_trajectory(bad)
+        AFTrajValidator().validate(bad)
+
+
+def test_generic_validator_does_not_require_failure_annotation():
+    trajectory = AFTrajAdapter().convert_record(source(0))
+    bad = replace(trajectory, annotations=ErrorAnnotations("not_provided", None, []))
+    CanonicalValidator().validate(bad)
 
 
 def test_rejects_non_continuous_indices():
@@ -43,4 +49,3 @@ def test_rejects_empty_steps():
     bad = replace(trajectory, steps=[], metadata={"num_steps": 0, "source_turn_count": 0})
     with pytest.raises(TrajectoryValidationError, match="non-empty"):
         validate_trajectory(bad)
-

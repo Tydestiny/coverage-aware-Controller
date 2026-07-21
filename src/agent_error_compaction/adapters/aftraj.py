@@ -8,6 +8,7 @@ from typing import Any
 from .base import BaseTrajectoryAdapter
 from ..schemas import (
     ActorInfo,
+    CanonicalEvent,
     CanonicalStep,
     CanonicalTrajectory,
     DerivedAnnotations,
@@ -21,6 +22,7 @@ from ..schemas import (
     ToolCall,
     ToolResult,
 )
+from ..validation import AFTrajValidator
 
 
 def _as_text(value: Any, field: str) -> str | None:
@@ -124,6 +126,7 @@ class AFTrajAdapter(BaseTrajectoryAdapter):
             raise ValueError("AFTraj-2K mistake_step_base is fixed at 0")
         self.mistake_step_base = mistake_step_base
         self.source_dataset = source_dataset
+        self.validator = AFTrajValidator()
 
     def convert_record(self, record: dict[str, Any]) -> CanonicalTrajectory:
         """Convert one AFTraj record without inferring new annotations."""
@@ -144,20 +147,32 @@ class AFTrajAdapter(BaseTrajectoryAdapter):
             role = _as_text(turn.get("role"), "role")
             action = turn.get("action")
             observation = turn.get("observation", turn.get("tool_result"))
+            actor = ActorInfo(actor_id, _actor_type(actor_id))
+            content = _as_text(next((turn[key] for key in ("content", "message", "text") if key in turn), None), "content")
+            reasoning = _as_text(next((turn[key] for key in ("thought", "reasoning", "analysis") if key in turn), None), "thought")
+            events: list[CanonicalEvent] = []
+            if _has_value(reasoning):
+                events.append(CanonicalEvent(len(events), "reasoning", actor, reasoning, raw_event=reasoning))
+            if _has_value(action):
+                events.append(CanonicalEvent(len(events), "tool_call", actor, None, _parse_tool_call(action), raw_event=action))
+            if _has_value(observation):
+                events.append(CanonicalEvent(len(events), "tool_result", ActorInfo("tool", "tool"), None, None, _parse_tool_result(observation), raw_event=observation))
+            if _has_value(content) and not events:
+                events.append(CanonicalEvent(len(events), "message", actor, content, raw_event=content))
             steps.append(
                 CanonicalStep(
                     step_index=index,
                     source_step_index=source_index,
                     source_step_id=_as_text(next((turn[key] for key in ("step_id", "turn_id", "id") if key in turn), None), "source_step_id"),
                     event_type=_infer_event_type(turn),
-                    content=_as_text(next((turn[key] for key in ("content", "message", "text") if key in turn), None), "content"),
+                    content=content,
                     raw_step=turn,
                     token_count=turn.get("token_count"),
-                    actor=ActorInfo(actor_id, _actor_type(actor_id)),
+                    actor=actor,
                     message_role=role,
-                    reasoning=_as_text(next((turn[key] for key in ("thought", "reasoning", "analysis") if key in turn), None), "thought"),
-                    tool_call=_parse_tool_call(action),
-                    tool_result=_parse_tool_result(observation),
+                    reasoning=reasoning,
+                    events=events,
+                    source_unit_type="turn",
                     decision_step_index=index,
                 )
             )
@@ -185,17 +200,19 @@ class AFTrajAdapter(BaseTrajectoryAdapter):
                 annotation_source="dataset_author",
                 annotation_method={"injected": "controlled_injection", "diagnosed": "post_hoc_diagnosis"}.get(unsafe_source, unsafe_source),
                 confidence=None,
+                alignment_status="exact",
             )
         return CanonicalTrajectory(
             schema_version=SCHEMA_VERSION,
             trajectory_id=trajectory_id,
             trajectory_family_id=None,
-            source=SourceInfo(self.source_dataset, _as_text(record.get("split"), "split"), trajectory_id),
+            source=SourceInfo(self.source_dataset, None, trajectory_id),
+            experiment_split=_as_text(record.get("split"), "split"),
             task=TaskInfo(_as_text(record.get("task_id"), "task_id"), record.get("task"), record.get("gold_answer")),
             environment=EnvironmentInfo(_as_text(record.get("domain"), "domain"), record.get("tools")),
             steps=steps,
             outcome=OutcomeInfo("failure" if is_failure else "success", None, None, "failure" if is_failure else "success"),
-            annotations=ErrorAnnotations(primary_error, []),
+            annotations=ErrorAnnotations("source_provided", primary_error, []),
             derived_annotations=DerivedAnnotations(),
             metadata={"num_steps": len(steps), "source_turn_count": len(turns), "source_unsafe_source": unsafe_source, "source_record": {key: record[key] for key in ("trajectory_family_id", "parent_trajectory_id", "parent_id", "related_trajectory_id", "family_id") if key in record}},
         )

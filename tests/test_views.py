@@ -5,7 +5,7 @@ import pytest
 from agent_error_compaction.views import build_evaluation_view, build_model_input_view, validate_model_input_view
 
 
-FORBIDDEN = {"schema_version", "trajectory_id", "trajectory_family_id", "source", "source_split", "environment", "gold_answer", "outcome", "annotations", "derived_annotations", "metadata", "labels", "is_failure", "error_onset_step", "source_error_onset_step", "critical_error_step", "responsible_actor", "error_reason", "error_type_original", "error_type_unified", "label_source", "unsafe_source", "raw_step"}
+FORBIDDEN = {"schema_version", "trajectory_id", "trajectory_family_id", "source", "source_split", "experiment_split", "environment", "gold_answer", "outcome", "annotations", "derived_annotations", "metadata", "labels", "is_failure", "error_onset_step", "source_error_onset_step", "critical_error_step", "responsible_actor", "error_reason", "error_type_original", "error_type_unified", "label_source", "unsafe_source", "raw_step", "source_step_index", "source_step_id", "source_unit_type", "raw_event"}
 
 
 def trajectory(is_failure=True):
@@ -13,13 +13,13 @@ def trajectory(is_failure=True):
         "schema_version": "1.1",
         "trajectory_id": "trajectory-1",
         "trajectory_family_id": "family-1",
-        "source": {"dataset": "AFTraj-2K", "split": "train", "record_id": "trajectory-1"},
+        "source": {"dataset": "AFTraj-2K", "original_split": None, "record_id": "trajectory-1"}, "experiment_split": "train",
         "task": {"task_id": None, "instruction": "Complete the task", "gold_answer": "secret answer"},
         "environment": {"domain": "demo", "tools": [{"name": "search"}]},
         "outcome": {"status": "failure" if is_failure else "success", "score": None, "termination_reason": None, "raw": "failure" if is_failure else "success"},
-        "annotations": {"primary_error": {"step_index": 2, "source_step_index": 2, "actor_id": "Agent", "reason": "secret reason", "error_type_original": "source", "error_type_unified": None, "label_semantics": "decisive_mistake_step", "annotation_source": "dataset_author", "annotation_method": "controlled_injection", "confidence": None} if is_failure else None, "error_events": []},
-        "derived_annotations": {"first_error_step": None, "earliest_detectable_step": None, "evidence_steps": [], "provenance": None},
-        "steps": [{"step_index": i, "source_step_index": i, "source_step_id": None, "event_type": "message", "content": f"step {i}", "raw_step": {"error_reason": "secret"}, "token_count": None, "actor": {"id": "Agent", "type": "agent"}, "message_role": "assistant", "reasoning": "public", "tool_call": {"call_id": None, "tool_name": None, "arguments": None, "raw": None}, "tool_result": {"call_id": None, "content": None, "status": None, "error_code": None, "raw": None}, "decision_step_index": i} for i in range(4)],
+        "annotations": {"annotation_status": "source_provided", "primary_error": {"step_index": 2, "source_step_index": 2, "actor_id": "Agent", "reason": "secret reason", "error_type_original": "source", "error_type_unified": None, "label_semantics": "decisive_mistake_step", "annotation_source": "dataset_author", "annotation_method": "controlled_injection", "confidence": None, "alignment_status": "exact"} if is_failure else None, "error_events": []},
+        "derived_annotations": {"first_error_step": {"value": None, "status": "not_annotated", "provenance": None}, "earliest_detectable_step": {"value": None, "status": "not_annotated", "provenance": None}, "evidence_steps": {"value": [], "status": "not_annotated", "provenance": None}},
+        "steps": [{"step_index": i, "source_step_index": i, "source_step_id": None, "source_unit_type": "turn", "decision_step_index": i, "event_type": "message", "content": f"step {i}", "raw_step": {"error_reason": "secret"}, "token_count": None, "actor": {"id": "Agent", "type": "agent"}, "message_role": "assistant", "reasoning": "public", "events": [{"event_index": 0, "event_type": "message", "actor": {"id": "Agent", "type": "agent"}, "content": f"step {i}", "tool_call": None, "tool_result": None, "raw_event": {"error_reason": "secret"}}]} for i in range(4)],
         "metadata": {"secret": "do not pass"},
     }
 
@@ -39,7 +39,7 @@ def test_builds_only_first_three_steps_and_whitelisted_fields():
     assert set(model_input) == {"task", "tools", "steps"}
     assert len(model_input["steps"]) == 3
     assert model_input["steps"][-1]["step_index"] == 2
-    assert set(model_input["steps"][0]) == {"step_index", "decision_step_index", "actor", "message_role", "event_type", "content", "reasoning", "tool_call", "tool_result"}
+    assert set(model_input["steps"][0]) == {"step_index", "decision_step_index", "actor", "message_role", "event_type", "content", "reasoning", "events"}
 
 
 def test_model_input_has_no_forbidden_nested_fields_or_raw_step():
@@ -91,4 +91,3 @@ def test_validation_requires_task_steps_and_continuous_indices():
         validate_model_input_view({"steps": []})
     with pytest.raises(ValueError, match="continuous"):
         validate_model_input_view({"task": "task", "steps": [{"step_index": 1, "decision_step_index": 1}]})
-

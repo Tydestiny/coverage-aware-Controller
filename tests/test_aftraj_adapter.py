@@ -38,10 +38,11 @@ def test_actor_and_message_role_are_separate():
 @pytest.mark.parametrize("action", ["tool", {"name": "tool"}, None])
 def test_raw_action_is_preserved(action):
     step = AFTrajAdapter().convert_record(record(0, action)).steps[0]
-    assert step.tool_call.raw == action
+    calls = [event.tool_call for event in step.events if event.tool_call is not None]
+    assert (calls[0].raw if calls else None) == action
 
 
 def test_raw_observation_is_preserved():
     step = AFTrajAdapter().convert_record(record(0)).steps[1]
-    assert step.tool_result.raw == "result"
-
+    results = [event.tool_result for event in step.events if event.tool_result is not None]
+    assert results[0].raw == "result"

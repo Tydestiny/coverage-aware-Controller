@@ -9,11 +9,13 @@ from typing import Any, Iterator
 
 from ..io_utils import read_records
 from ..schemas import CanonicalTrajectory
-from ..validation import validate_trajectory
+from ..validation import CanonicalValidator, validate_trajectory
 
 
 class BaseTrajectoryAdapter(ABC):
     """Convert a source dataset into validated canonical JSONL records."""
+
+    validator = CanonicalValidator()
 
     def load_records(self, path: Path) -> Iterator[dict[str, Any]]:
         """Stream source object records from JSON or JSONL."""
@@ -35,7 +37,7 @@ class BaseTrajectoryAdapter(ABC):
                     stats["total"] += 1
                     try:
                         trajectory = self.convert_record(record)
-                        validate_trajectory(trajectory)
+                        self.validator.validate(trajectory)
                     except Exception as exc:  # Per-record conversion failures must be recorded.
                         rejected.write(json.dumps({"record_index": index, "reason": str(exc), "raw_record": record}, ensure_ascii=False) + "\n")
                         stats["rejected"] += 1

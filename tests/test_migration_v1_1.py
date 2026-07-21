@@ -54,9 +54,8 @@ def test_migrates_outcome_and_structured_step_raw_values():
     assert result.steps[0].actor.type == "agent"
     assert result.steps[0].message_role == "assistant"
     assert result.steps[0].decision_step_index == 0
-    assert result.steps[0].tool_call.raw == {"name": "compute"}
-    assert result.steps[0].tool_result.raw == {"result": "1"}
+    assert next(event for event in result.steps[0].events if event.tool_call is not None).tool_call.raw == {"name": "compute"}
+    assert next(event for event in result.steps[0].events if event.tool_result is not None).tool_result.raw == {"result": "1"}
     assert result.steps[0].raw_step == {"content": "call", "secret": "unchanged"}
-    assert result.derived_annotations.first_error_step is None
-    assert result.derived_annotations.evidence_steps == []
-
+    assert result.derived_annotations.first_error_step.status == "not_annotated"
+    assert result.derived_annotations.evidence_steps.value == []

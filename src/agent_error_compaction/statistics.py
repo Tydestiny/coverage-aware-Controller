@@ -43,6 +43,9 @@ def build_report(trajectories_by_split: dict[str, list[CanonicalTrajectory]], pr
         "outcome_distribution": _distribution([item.outcome.status for item in all_trajectories]),
         "domain_distribution": _distribution([item.environment.domain for item in all_trajectories]),
         "annotation_method_distribution": _distribution([item.annotations.primary_error.annotation_method if item.annotations.primary_error else "safe" for item in all_trajectories]),
+        "unsafe_source_distribution": _distribution([item.metadata.get("source_unsafe_source", "safe") for item in all_trajectories]),
+        "annotation_status_distribution": _distribution([item.annotations.annotation_status for item in all_trajectories]),
+        "alignment_status_distribution": _distribution([item.annotations.primary_error.alignment_status if item.annotations.primary_error else "not_applicable" for item in all_trajectories]),
         "trajectory_length": _length_summary([len(item.steps) for item in all_trajectories]),
         "critical_error_absolute_distribution": _distribution(onset_abs),
         "critical_error_relative_distribution": _distribution([round(value, 4) for value in onset_rel]),
@@ -58,7 +61,7 @@ def build_report(trajectories_by_split: dict[str, list[CanonicalTrajectory]], pr
 
 def report_markdown(report: dict[str, Any]) -> str:
     """Render a compact v1.1 Markdown report."""
-    selected = {key: report[key] for key in ("outcome_distribution", "domain_distribution", "annotation_method_distribution", "critical_error_occurred_distribution", "distance_to_critical_error_distribution")}
+    selected = {key: report[key] for key in ("outcome_distribution", "domain_distribution", "unsafe_source_distribution", "annotation_status_distribution", "alignment_status_distribution", "annotation_method_distribution", "critical_error_occurred_distribution", "distance_to_critical_error_distribution")}
     lines = ["# Dataset Report", "", f"- Schema: {report['schema_version']}", f"- Trajectories: {report['trajectory_count']}", f"- Prefixes: {report['prefix_count']}", f"- Family leakage check: {'passed' if report['family_leakage_check']['passed'] else 'failed'}", f"- Rejected records: {report['rejected_records']['count']}", "", "## Distributions", "", "```json", json.dumps(selected, ensure_ascii=False, indent=2, sort_keys=True), "```", "", "## Split Summary", "", "```json", json.dumps(report["splits"], ensure_ascii=False, indent=2, sort_keys=True), "```", ""]
     return "\n".join(lines)
 
@@ -69,4 +72,3 @@ def write_report(report: dict[str, Any], output_json: Path, output_md: Path) -> 
     output_md.parent.mkdir(parents=True, exist_ok=True)
     output_json.write_text(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     output_md.write_text(report_markdown(report), encoding="utf-8")
-

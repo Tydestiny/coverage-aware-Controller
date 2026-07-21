@@ -10,6 +10,7 @@ from typing import Any, Iterator
 from .io_utils import read_records
 from .schemas import (
     ActorInfo,
+    CanonicalEvent,
     CanonicalStep,
     CanonicalTrajectory,
     DerivedAnnotations,
@@ -62,6 +63,16 @@ def _tool_result(value: Any) -> ToolResult:
 def _step(old_step: dict[str, Any], index: int) -> CanonicalStep:
     """Migrate one v1.0 step while preserving its raw object."""
     role = old_step.get("role")
+    actor = _actor(old_step.get("actor"), role)
+    events: list[CanonicalEvent] = []
+    if old_step.get("thought") is not None:
+        events.append(CanonicalEvent(len(events), "reasoning", actor, old_step.get("thought"), raw_event=deepcopy(old_step.get("thought"))))
+    if old_step.get("action") is not None:
+        events.append(CanonicalEvent(len(events), "tool_call", actor, None, _tool_call(old_step.get("action")), raw_event=deepcopy(old_step.get("action"))))
+    if old_step.get("observation") is not None:
+        events.append(CanonicalEvent(len(events), "tool_result", ActorInfo("tool", "tool"), None, None, _tool_result(old_step.get("observation")), raw_event=deepcopy(old_step.get("observation"))))
+    if old_step.get("content") is not None and not events:
+        events.append(CanonicalEvent(len(events), "message", actor, old_step.get("content"), raw_event=deepcopy(old_step.get("content"))))
     return CanonicalStep(
         step_index=old_step["step_index"],
         source_step_index=old_step["source_step_index"],
@@ -70,11 +81,11 @@ def _step(old_step: dict[str, Any], index: int) -> CanonicalStep:
         content=old_step.get("content"),
         raw_step=deepcopy(old_step["raw_step"]),
         token_count=old_step.get("token_count"),
-        actor=_actor(old_step.get("actor"), role),
+        actor=actor,
         message_role=role,
         reasoning=old_step.get("thought"),
-        tool_call=_tool_call(old_step.get("action")),
-        tool_result=_tool_result(old_step.get("observation")),
+        events=events,
+        source_unit_type="turn",
         decision_step_index=old_step["step_index"],
     )
 
@@ -107,6 +118,7 @@ def migrate_record(old: dict[str, Any]) -> CanonicalTrajectory:
             annotation_source="dataset_author",
             annotation_method=method,
             confidence=None,
+            alignment_status="exact",
         )
     steps = [_step(step, index) for index, step in enumerate(old.get("steps", []))]
     old_task = old.get("task")
@@ -117,14 +129,15 @@ def migrate_record(old: dict[str, Any]) -> CanonicalTrajectory:
         schema_version=SCHEMA_VERSION,
         trajectory_id=old["trajectory_id"],
         trajectory_family_id=old.get("trajectory_family_id"),
-        source=SourceInfo(old.get("source_dataset", "AFTraj-2K"), old.get("source_split"), old["trajectory_id"]),
+        source=SourceInfo(old.get("source_dataset", "AFTraj-2K"), None, old["trajectory_id"]),
+        experiment_split=old.get("source_split"),
         task=TaskInfo(old.get("task_id"), deepcopy(old_task), deepcopy(old.get("gold_answer"))),
         environment=EnvironmentInfo(deepcopy(old_domain), deepcopy(old_tools)),
         steps=steps,
         outcome=OutcomeInfo(status, None, None, deepcopy(status)),
-        annotations=ErrorAnnotations(primary, []),
+        annotations=ErrorAnnotations("source_provided", primary, []),
         derived_annotations=DerivedAnnotations(),
-        metadata={"migration": {"from_schema_version": "1.0", "method": "deterministic_field_mapping"}, "num_steps": len(steps), "source_turn_count": len(steps), "legacy_metadata": old_metadata},
+        metadata={"migration": {"from_schema_version": "1.0", "method": "deterministic_field_mapping"}, "num_steps": len(steps), "source_turn_count": len(steps), "source_unsafe_source": labels.get("unsafe_source") or "safe", "legacy_metadata": old_metadata},
     )
 
 
@@ -145,4 +158,3 @@ def migrate_file(input_path: Path, output_path: Path, rejected_path: Path) -> di
             output.write(json.dumps(migrated.to_dict(), ensure_ascii=False, sort_keys=True) + "\n")
             stats["migrated"] += 1
     return stats
-
