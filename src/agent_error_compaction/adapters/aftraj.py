@@ -133,9 +133,16 @@ class AFTrajAdapter(BaseTrajectoryAdapter):
         onset = source_onset - self.mistake_step_base if source_onset is not None else None
         unsafe_source = _as_text(record.get("unsafe_source"), "unsafe_source") or ("safe" if not is_failure else None)
         labels = TrajectoryLabels(is_failure, onset, source_onset, _as_text(record.get("mistake_agent"), "mistake_agent"), _as_text(record.get("mistake_type"), "mistake_type"), None, _as_text(record.get("mistake_reason"), "mistake_reason"), unsafe_source, unsafe_source)
+        
+        # 核心修复点：防防御式提取 family_id，无则自动回退为 trajectory_id
+        family_id = _as_text(
+            record.get("trajectory_family_id") or record.get("family_id") or record.get("task_id"),
+            "family_id"
+        ) or trajectory_id
+
         return CanonicalTrajectory(
             trajectory_id=trajectory_id,
-            trajectory_family_id=None,
+            trajectory_family_id=family_id,  # 赋值为计算后的 family_id
             source_dataset=self.source_dataset,
             source_split=_as_text(record.get("split"), "split"),
             domain=_as_text(record.get("domain"), "domain"),
