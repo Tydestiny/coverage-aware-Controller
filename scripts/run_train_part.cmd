@@ -10,7 +10,8 @@ set "CONTROLLER_REPO=%~dp0.."
 for %%I in ("%CONTROLLER_REPO%") do set "CONTROLLER_REPO=%%~fI"
 
 if "%APPWORLD_ROOT%"=="" (
-  set "APPWORLD_ROOT=D:\TY\SJTU\CIS\adaptive_compaction_validation\appworld"
+  set "APPWORLD_ROOT=%CONTROLLER_REPO%\..\appworld"
+  for %%I in ("%APPWORLD_ROOT%") do set "APPWORLD_ROOT=%%~fI"
 )
 
 set "TASK_LIST=%~f1"

@@ -1,11 +1,11 @@
-# AppWorld Integration Notes
+﻿# AppWorld Integration Notes
 
 This note records the local AppWorld call chain inspected for the minimal Coverage-Aware Controller integration spike.
 
 Local source inspected:
 
 ```text
-D:\TY\SJTU\CIS\adaptive_compaction_validation\appworld
+D:\TY\SJTU\CIS\appworld
 ```
 
 ## Simplified ReAct Step Loop

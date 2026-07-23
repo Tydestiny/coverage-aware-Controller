@@ -1,4 +1,4 @@
-# AppWorld Controller Agent
+﻿# AppWorld Controller Agent
 
 This repository contains the controller runtime for AppWorld:
 
@@ -31,7 +31,7 @@ workspace/
 On the current machine these are:
 
 ```text
-D:\TY\SJTU\CIS\adaptive_compaction_validation\appworld
+D:\TY\SJTU\CIS\appworld
 D:\TY\SJTU\CIS\diagnosis-aware-compaction
 ```
 

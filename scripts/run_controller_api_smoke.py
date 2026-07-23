@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--experiment-name", default="controlled_react_checkpoint_collection")
     parser.add_argument(
         "--appworld-root",
-        default=str(REPO_ROOT.parent / "adaptive_compaction_validation" / "appworld"),
+        default=str(REPO_ROOT.parent / "appworld"),
     )
     parser.add_argument("--output-dir", default=None)
     return parser.parse_args()

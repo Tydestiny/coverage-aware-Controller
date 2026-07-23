@@ -1,4 +1,4 @@
-# Static AppWorld Trajectory Checkpoint Notes
+﻿# Static AppWorld Trajectory Checkpoint Notes
 
 This note records what is actually available in the current AppWorld baseline outputs and what the offline checkpoint replay prototype can validate.
 
@@ -7,7 +7,7 @@ This note records what is actually available in the current AppWorld baseline ou
 Primary inspected baseline:
 
 ```text
-D:\TY\SJTU\CIS\adaptive_compaction_validation\appworld\experiments\outputs\simplified_react_code_agent\alibaba\qwen3-coder-flash-2025-07-28\dev\tasks\23cf851_1
+D:\TY\SJTU\CIS\appworld\experiments\outputs\simplified_react_code_agent\alibaba\qwen3-coder-flash-2025-07-28\dev\tasks\23cf851_1
 ```
 
 Available files:
