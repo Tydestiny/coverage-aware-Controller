@@ -10,9 +10,9 @@ obsolete/diagnosis-aware-compaction-legacy
 
 ## Scope
 
-The active code implements a thin controller wrapper around a simplified ReAct-style AppWorld agent. The first controller trigger is `before_finish`: when the base agent attempts to call `supervisor.complete_task`, the wrapper can allow the finish action or block it and inject temporary guidance for the next turn.
+The active code implements a thin controller wrapper around a simplified ReAct-style AppWorld agent. The first controller trigger is `before_finish`: when the base agent attempts to call `supervisor.complete_task`, the wrapper can allow the finish action or return an explicit interception decision.
 
-This project does not vendor AppWorld. Keep the official AppWorld repository and raw trajectories outside Git, and connect this package to AppWorld through integration code and experiment configs.
+This project does not vendor AppWorld. Keep the official AppWorld repository and raw trajectories outside Git, and connect this package to AppWorld through an `ExecutionInterceptionAdapter`.
 
 ## Layout
 
@@ -21,7 +21,7 @@ controller_agent/
   controller/       Controller decision adapter and guidance formatting.
   triggers/         Trigger interfaces and before-finish trigger.
   state/            Dataclasses and visible-state construction.
-  integration/      Controlled ReAct wrapper.
+  integration/      Controlled ReAct wrapper and interception adapter boundary.
   logging/          Structured controller event logger.
   tests/            Mock-based unit tests. No real API calls.
 docs/
@@ -46,9 +46,23 @@ When controller mode is disabled, `ControlledReActAgent` delegates directly to t
 When controller mode is enabled:
 
 1. The wrapped agent generates its normal next execution input.
-2. `BeforeFinishTrigger` checks whether the agent is attempting `supervisor.complete_task`.
-3. `StateBuilder` builds a controller input from visible task/history/output only.
-4. `Controller.decide` returns one of:
+2. `ControlledReActAgent` builds a `TriggerContext` from task id, step index, visible history, proposed execution, last execution outputs, and controller runtime counters.
+3. `BeforeFinishTrigger.detect(context)` checks whether the proposed execution attempts `supervisor.complete_task`.
+4. `StateBuilder` builds a `ControllerInput` from visible task/history/output only.
+5. `Controller.decide` returns a `ControllerResponse` containing a `ControllerDecision` and optional usage metadata.
+6. `ControllerDecision.action` remains one of:
    `PROCEED`, `VERIFY_TARGET_SET`, `LOOKUP_API_SPEC`, `REPLAN`, `BLOCK_RISKY_ACTION`.
-5. `PROCEED` returns the original execution input.
-6. Any other action blocks the finish call and appends temporary guidance for the next turn.
+7. `inspect_proposed_execution(...)` returns an `InterceptionResult`.
+8. The integration adapter decides how to apply that result to the concrete runtime.
+
+The core layer does not implement AppWorld-specific blocking semantics. In the current offline adapter, a blocked branch returns `integration not configured` and keeps the proposed execution unchanged. A production AppWorld adapter must define the exact runtime behavior before real tasks are run.
+
+## Current Boundaries
+
+- Trigger layer: detects whether a controller call should happen.
+- State layer: defines contracts and builds visible controller inputs.
+- Controller layer: validates backend output and fail-opens on invalid JSON or exceptions.
+- Integration layer: adapts `InterceptionResult` to a concrete runtime.
+- Logging layer: records controller events, usage metadata, and runtime counters without API keys.
+
+Only `before_finish` is implemented. New triggers, a real controller model backend, controller prompts, and AppWorld-specific interception behavior should be implemented after these interfaces are treated as stable.

@@ -8,9 +8,18 @@ from typing import Any
 
 from controller_agent.controller.controller import Controller
 from controller_agent.controller.guidance import GuidanceBuilder
+from controller_agent.integration.base import ExecutionInterceptionAdapter, OfflineMockAdapter
 from controller_agent.logging.logger import ExperimentLogger
 from controller_agent.state.builder import StateBuilder
-from controller_agent.state.schemas import Action
+from controller_agent.state.schemas import (
+    Action,
+    ControllerConfig,
+    ControllerResponse,
+    ControllerRuntimeState,
+    InterceptionResult,
+    TriggerContext,
+    TriggerResult,
+)
 from controller_agent.triggers.before_finish import BeforeFinishTrigger
 
 
@@ -30,7 +39,10 @@ class ControlledReActAgent:
         state_builder: StateBuilder | None = None,
         guidance_builder: GuidanceBuilder | None = None,
         logger: ExperimentLogger | None = None,
-        enabled: bool = True,
+        enabled: bool | None = None,
+        config: ControllerConfig | None = None,
+        runtime_state: ControllerRuntimeState | None = None,
+        integration_adapter: ExecutionInterceptionAdapter | None = None,
     ) -> None:
         self.agent = agent
         self.controller = controller or Controller()
@@ -38,46 +50,110 @@ class ControlledReActAgent:
         self.state_builder = state_builder or StateBuilder()
         self.guidance_builder = guidance_builder or GuidanceBuilder()
         self.logger = logger or ExperimentLogger()
-        self.enabled = enabled
+        self.config = config or ControllerConfig(enabled=True if enabled is None else enabled)
+        self.runtime_state = runtime_state or ControllerRuntimeState()
+        self.integration_adapter = integration_adapter or OfflineMockAdapter()
 
-    def next_execution_inputs_usage_and_status(self, last_execution_outputs: Sequence[Any]) -> tuple[Sequence[Any], Any, Any]:
-        """Delegate one Agent turn and intercept only before_finish."""
+    def next_execution_inputs_usage_and_status(self, last_execution_outputs: Sequence[Any]) -> Any:
+        """Delegate one Agent turn and inspect only proposed execution."""
         result = self.agent.next_execution_inputs_usage_and_status(last_execution_outputs)
-        if not self.enabled:
+        if not self.config.enabled:
             return result
-        execution_inputs, usage, status = result
+        execution_inputs, _, status = result
         if getattr(status, "failed", False) or not execution_inputs:
             return result
-        current_output = str(getattr(execution_inputs[0], "content", ""))
-        trigger = self.trigger_detector.detect(current_output)
+        context = self._build_trigger_context(execution_inputs, last_execution_outputs)
+        interception = self.inspect_proposed_execution(context, execution_inputs)
+        if interception.trigger_result is None:
+            return result
+        return self.integration_adapter.apply(result, interception, self.agent)
+
+    def inspect_proposed_execution(
+        self,
+        context: TriggerContext,
+        original_execution_inputs: Any,
+    ) -> InterceptionResult:
+        """Inspect proposed execution and return a runtime-neutral decision."""
+        trigger = self.trigger_detector.detect(context)
         if not trigger.should_call_controller:
-            return result
+            return InterceptionResult(True, original_execution_inputs, trigger_result=None)
+        if self._controller_call_limit_reached() or self._consecutive_block_limit_reached():
+            return InterceptionResult(True, original_execution_inputs, trigger_result=trigger)
+
         controller_input = self.state_builder.build(
-            self._task_text(), trigger, getattr(self.agent, "messages", []), current_output
+            context.task,
+            trigger,
+            context.recent_history,
+            context.proposed_execution,
         )
-        decision = self.controller.decide(controller_input)
-        blocked = decision.action != Action.PROCEED
-        guidance = self.guidance_builder.build(decision)
-        if blocked and guidance:
-            messages = getattr(self.agent, "messages", None)
-            if isinstance(messages, list):
-                messages.append({"role": "user", "content": guidance})
-        self.logger.log_controller_event(trigger, controller_input, decision, blocked)
-        if not blocked:
-            return result
-        blocked_inputs = [copy.deepcopy(item) for item in execution_inputs]
-        blocked_inputs[0].content = ""
-        metadata = getattr(blocked_inputs[0], "metadata", None)
-        if isinstance(metadata, dict):
-            metadata["controller_blocked"] = True
-            metadata["controller_action"] = decision.action.value
-        return blocked_inputs, usage, status
+        response = self.controller.decide(controller_input)
+        blocked = response.decision.action != Action.PROCEED
+        guidance = self.guidance_builder.build(response.decision) if blocked else None
+        self._update_runtime_state(context, response, blocked)
+        self.logger.log_controller_event(
+            context=context,
+            trigger=trigger,
+            controller_input=controller_input,
+            response=response,
+            runtime_state=self.runtime_state,
+            blocked=blocked,
+        )
+        return InterceptionResult(
+            allow_execution=not blocked,
+            original_execution_inputs=original_execution_inputs,
+            guidance_message=guidance,
+            trigger_result=trigger,
+            controller_response=response,
+            block_reason=response.decision.reason if blocked else None,
+        )
+
+    def _build_trigger_context(self, execution_inputs: Sequence[Any], last_execution_outputs: Sequence[Any]) -> TriggerContext:
+        """Build trigger context from visible wrapped-agent state."""
+        return TriggerContext(
+            task_id=self._task_id(),
+            step_index=int(getattr(self.agent, "step_number", 0) or 0),
+            task=self._task_text(),
+            proposed_execution=str(getattr(execution_inputs[0], "content", "")),
+            last_execution_outputs=list(last_execution_outputs),
+            recent_history=copy.deepcopy(list(getattr(self.agent, "messages", []))[-12:]),
+            runtime_state=self.runtime_state.to_dict(),
+        )
+
+    def _controller_call_limit_reached(self) -> bool:
+        """Return whether the configured per-task call limit is exhausted."""
+        limit = self.config.max_controller_calls_per_task
+        return limit is not None and self.runtime_state.total_calls >= limit
+
+    def _consecutive_block_limit_reached(self) -> bool:
+        """Return whether the configured consecutive block limit is exhausted."""
+        limit = self.config.max_consecutive_blocks
+        return limit is not None and self.runtime_state.consecutive_blocks >= limit
+
+    def _update_runtime_state(self, context: TriggerContext, response: ControllerResponse, blocked: bool) -> None:
+        """Maintain simple Controller runtime counters."""
+        self.runtime_state.total_calls += 1
+        self.runtime_state.last_trigger_step = context.step_index
+        self.runtime_state.last_action = response.decision.action.value
+        if blocked:
+            self.runtime_state.total_blocks += 1
+            self.runtime_state.consecutive_blocks += 1
+        else:
+            self.runtime_state.consecutive_blocks = 0
 
     def _task_text(self) -> str:
         """Read the task instruction from the wrapped Agent when available."""
-        world = getattr(self.agent, "world", None)
-        task = getattr(world, "task", None)
+        task = self._task_obj()
         return str(getattr(task, "instruction", getattr(self.agent, "task", "")))
+
+    def _task_id(self) -> str:
+        """Read the task id from the wrapped Agent when available."""
+        task = self._task_obj()
+        return str(getattr(task, "task_id", getattr(task, "id", getattr(self.agent, "task_id", ""))))
+
+    def _task_obj(self) -> Any:
+        """Return the wrapped Agent task object if present."""
+        world = getattr(self.agent, "world", None)
+        return getattr(world, "task", None)
 
     def __getattr__(self, name: str) -> Any:
         """Delegate non-controller attributes to the original Agent."""

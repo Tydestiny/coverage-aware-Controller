@@ -27,6 +27,19 @@ class TriggerResult:
 
 
 @dataclass(frozen=True)
+class TriggerContext:
+    """Runtime context available to trigger detectors."""
+
+    task_id: str
+    step_index: int
+    task: str
+    proposed_execution: str
+    last_execution_outputs: list[Any]
+    recent_history: list[dict[str, Any]]
+    runtime_state: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class ControllerInput:
     """Information visible to a Controller decision."""
 
@@ -49,6 +62,62 @@ class ControllerDecision:
     confidence: float = 0.0
 
 
+@dataclass(frozen=True)
+class ControllerResponse:
+    """Controller decision plus optional usage and raw response metadata."""
+
+    decision: ControllerDecision
+    model_name: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_seconds: float | None = None
+    cost_cny: float | None = None
+    raw_response: str | None = None
+
+
+@dataclass
+class ControllerRuntimeState:
+    """Mutable per-task Controller accounting state."""
+
+    total_calls: int = 0
+    total_blocks: int = 0
+    consecutive_blocks: int = 0
+    last_trigger_step: int | None = None
+    last_action: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable snapshot."""
+        return {
+            "total_calls": self.total_calls,
+            "total_blocks": self.total_blocks,
+            "consecutive_blocks": self.consecutive_blocks,
+            "last_trigger_step": self.last_trigger_step,
+            "last_action": self.last_action,
+        }
+
+
+@dataclass(frozen=True)
+class ControllerConfig:
+    """Static Controller runtime limits."""
+
+    enabled: bool = True
+    max_controller_calls_per_task: int | None = None
+    max_consecutive_blocks: int | None = None
+    fail_open_on_controller_error: bool = True
+
+
+@dataclass(frozen=True)
+class InterceptionResult:
+    """Core decision about whether proposed execution may continue."""
+
+    allow_execution: bool
+    original_execution_inputs: Any
+    guidance_message: str | None = None
+    trigger_result: TriggerResult | None = None
+    controller_response: ControllerResponse | None = None
+    block_reason: str | None = None
+
+
 def decision_from_mapping(value: dict[str, Any]) -> ControllerDecision:
     """Validate an untrusted mapping returned by a Controller backend."""
     try:
@@ -61,3 +130,33 @@ def decision_from_mapping(value: dict[str, Any]) -> ControllerDecision:
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("Controller confidence must be between 0 and 1.")
     return ControllerDecision(action, reason, instruction, confidence)
+
+
+def response_from_mapping(value: dict[str, Any]) -> ControllerResponse:
+    """Validate a Controller response mapping, including legacy decision maps."""
+    decision_value = value.get("decision")
+    decision = decision_from_mapping(decision_value if isinstance(decision_value, dict) else value)
+    return ControllerResponse(
+        decision=decision,
+        model_name=_optional_str(value.get("model_name")),
+        input_tokens=_optional_int(value.get("input_tokens")),
+        output_tokens=_optional_int(value.get("output_tokens")),
+        latency_seconds=_optional_float(value.get("latency_seconds")),
+        cost_cny=_optional_float(value.get("cost_cny")),
+        raw_response=_optional_str(value.get("raw_response")),
+    )
+
+
+def _optional_str(value: Any) -> str | None:
+    """Convert optional metadata to string."""
+    return None if value is None else str(value)
+
+
+def _optional_int(value: Any) -> int | None:
+    """Convert optional metadata to int."""
+    return None if value is None else int(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    """Convert optional metadata to float."""
+    return None if value is None else float(value)
