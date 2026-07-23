@@ -53,9 +53,12 @@ class ControlledReActAgent:
         self.config = config or ControllerConfig(enabled=True if enabled is None else enabled)
         self.runtime_state = runtime_state or ControllerRuntimeState()
         self.integration_adapter = integration_adapter or OfflineMockAdapter()
+        self._current_task_id: str | None = None
+        self.last_interception_result: InterceptionResult | None = None
 
     def next_execution_inputs_usage_and_status(self, last_execution_outputs: Sequence[Any]) -> Any:
         """Delegate one Agent turn and inspect only proposed execution."""
+        self.last_interception_result = None
         result = self.agent.next_execution_inputs_usage_and_status(last_execution_outputs)
         if not self.config.enabled:
             return result
@@ -63,7 +66,10 @@ class ControlledReActAgent:
         if getattr(status, "failed", False) or not execution_inputs:
             return result
         context = self._build_trigger_context(execution_inputs, last_execution_outputs)
-        interception = self.inspect_proposed_execution(context, execution_inputs)
+        self._reset_if_task_changed(context.task_id)
+        context = self._build_trigger_context(execution_inputs, last_execution_outputs)
+        interception = self.inspect_proposed_execution(context, result, execution_inputs)
+        self.last_interception_result = interception
         if interception.trigger_result is None:
             return result
         return self.integration_adapter.apply(result, interception, self.agent)
@@ -71,14 +77,15 @@ class ControlledReActAgent:
     def inspect_proposed_execution(
         self,
         context: TriggerContext,
+        original_result: Any,
         original_execution_inputs: Any,
     ) -> InterceptionResult:
         """Inspect proposed execution and return a runtime-neutral decision."""
         trigger = self.trigger_detector.detect(context)
         if not trigger.should_call_controller:
-            return InterceptionResult(True, original_execution_inputs, trigger_result=None)
+            return InterceptionResult(True, original_result, original_execution_inputs, trigger_result=None)
         if self._controller_call_limit_reached() or self._consecutive_block_limit_reached():
-            return InterceptionResult(True, original_execution_inputs, trigger_result=trigger)
+            return InterceptionResult(True, original_result, original_execution_inputs, trigger_result=trigger)
 
         controller_input = self.state_builder.build(
             context.task,
@@ -88,6 +95,8 @@ class ControlledReActAgent:
         )
         response = self.controller.decide(controller_input)
         blocked = response.decision.action != Action.PROCEED
+        if blocked and self._controller_block_limit_reached():
+            blocked = False
         guidance = self.guidance_builder.build(response.decision) if blocked else None
         self._update_runtime_state(context, response, blocked)
         self.logger.log_controller_event(
@@ -100,12 +109,24 @@ class ControlledReActAgent:
         )
         return InterceptionResult(
             allow_execution=not blocked,
+            original_result=original_result,
             original_execution_inputs=original_execution_inputs,
             guidance_message=guidance,
             trigger_result=trigger,
             controller_response=response,
             block_reason=response.decision.reason if blocked else None,
         )
+
+    def reset_for_task(self, task_id: str) -> None:
+        """Reset controller state for a new AppWorld task."""
+        self.runtime_state.total_calls = 0
+        self.runtime_state.total_blocks = 0
+        self.runtime_state.consecutive_blocks = 0
+        self.runtime_state.agent_turn_count = 0
+        self.runtime_state.environment_execution_count = 0
+        self.runtime_state.last_trigger_step = None
+        self.runtime_state.last_action = None
+        self._current_task_id = task_id
 
     def _build_trigger_context(self, execution_inputs: Sequence[Any], last_execution_outputs: Sequence[Any]) -> TriggerContext:
         """Build trigger context from visible wrapped-agent state."""
@@ -129,6 +150,11 @@ class ControlledReActAgent:
         limit = self.config.max_consecutive_blocks
         return limit is not None and self.runtime_state.consecutive_blocks >= limit
 
+    def _controller_block_limit_reached(self) -> bool:
+        """Return whether the configured total block limit is exhausted."""
+        limit = self.config.max_controller_blocks
+        return limit is not None and self.runtime_state.total_blocks >= limit
+
     def _update_runtime_state(self, context: TriggerContext, response: ControllerResponse, blocked: bool) -> None:
         """Maintain simple Controller runtime counters."""
         self.runtime_state.total_calls += 1
@@ -139,6 +165,11 @@ class ControlledReActAgent:
             self.runtime_state.consecutive_blocks += 1
         else:
             self.runtime_state.consecutive_blocks = 0
+
+    def _reset_if_task_changed(self, task_id: str) -> None:
+        """Reset runtime state when the wrapped task id changes."""
+        if task_id and task_id != self._current_task_id:
+            self.reset_for_task(task_id)
 
     def _task_text(self) -> str:
         """Read the task instruction from the wrapped Agent when available."""

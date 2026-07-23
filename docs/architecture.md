@@ -86,6 +86,30 @@ The core layer is runtime-neutral. It only returns `InterceptionResult`.
 
 A production AppWorld adapter still needs to define how a blocked finish attempt is represented to the official runtime without accidentally executing partial or empty code.
 
+## Minimal AppWorld Spike
+
+The local AppWorld source shows that the stock `Agent.solve_task` loop immediately sends returned execution code to `world.batch_execute`. There is no built-in "skip execution and continue to the next model call" hook between the agent and environment.
+
+The spike therefore adds:
+
+- `AppWorldInterceptionAdapter`: injects marked guidance and returns an explicit blocked result.
+- `AppWorldInterceptionApplied`: the blocked result consumed by the runner.
+- `ControlledAppWorldRunner`: a minimal runner wrapper that mirrors the stock step loop but skips `world.batch_execute` for blocked finish attempts.
+- `DeterministicSmokeController`: model-free smoke controller; first `before_finish` returns `VERIFY_TARGET_SET`, second returns `PROCEED`.
+
+Guidance is injected as:
+
+```text
+[CONTROLLER_GUIDANCE]
+...
+```
+
+The role is `user` because `SimplifiedReActCodeAgent.messages_to_text(...)` only supports `system`, `assistant`, and `user`, and environment observations already enter through user-role runtime feedback. The marker prevents confusing guidance with the original task instruction.
+
+The adapter tracks injected guidance content and does not duplicate the same guidance message.
+
+Detailed source notes are in `docs/appworld_integration_notes.md`.
+
 ## Safety Rules
 
 - The first implementation only intercepts finish attempts.

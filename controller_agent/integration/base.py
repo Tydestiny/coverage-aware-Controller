@@ -37,6 +37,6 @@ class OfflineMockAdapter:
             return original_result
         return OfflineInterceptionResult(
             integration_status="integration not configured",
-            original_result=original_result,
+            original_result=interception.original_result,
             interception=interception,
         )

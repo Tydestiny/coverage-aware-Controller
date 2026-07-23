@@ -26,6 +26,7 @@ controller_agent/
   tests/            Mock-based unit tests. No real API calls.
 docs/
   architecture.md   Main loop, interfaces, and dependency notes.
+  appworld_integration_notes.md
 ```
 
 ## Development
@@ -57,6 +58,8 @@ When controller mode is enabled:
 
 The core layer does not implement AppWorld-specific blocking semantics. In the current offline adapter, a blocked branch returns `integration not configured` and keeps the proposed execution unchanged. A production AppWorld adapter must define the exact runtime behavior before real tasks are run.
 
+The minimal AppWorld integration spike adds `AppWorldInterceptionAdapter` and `ControlledAppWorldRunner`. The runner wraps the stock AppWorld step loop so a blocked `complete_task` is not sent to `world.batch_execute`; instead, marked guidance is injected and the agent advances to the next generation turn.
+
 ## Current Boundaries
 
 - Trigger layer: detects whether a controller call should happen.
@@ -66,3 +69,15 @@ The core layer does not implement AppWorld-specific blocking semantics. In the c
 - Logging layer: records controller events, usage metadata, and runtime counters without API keys.
 
 Only `before_finish` is implemented. New triggers, a real controller model backend, controller prompts, and AppWorld-specific interception behavior should be implemented after these interfaces are treated as stable.
+
+## AppWorld Smoke Path
+
+The current smoke integration is deterministic and model-free:
+
+- `DeterministicSmokeController` blocks the first `before_finish` and allows the second.
+- `AppWorldInterceptionAdapter` injects `[CONTROLLER_GUIDANCE]` as a `user` role message because the simplified ReAct formatter only supports `system`, `assistant`, and `user`.
+- `ControlledAppWorldRunner` is the minimal runner wrapper that skips environment execution for blocked finish attempts.
+
+The inspected AppWorld call chain is documented in [docs/appworld_integration_notes.md](docs/appworld_integration_notes.md).
+
+A real single-task smoke test should use a cached or mock model output source first. Do not run a live API-backed AppWorld task until the production adapter behavior is reviewed.

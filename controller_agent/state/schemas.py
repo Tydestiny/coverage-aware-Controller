@@ -82,6 +82,8 @@ class ControllerRuntimeState:
     total_calls: int = 0
     total_blocks: int = 0
     consecutive_blocks: int = 0
+    agent_turn_count: int = 0
+    environment_execution_count: int = 0
     last_trigger_step: int | None = None
     last_action: str | None = None
 
@@ -91,6 +93,8 @@ class ControllerRuntimeState:
             "total_calls": self.total_calls,
             "total_blocks": self.total_blocks,
             "consecutive_blocks": self.consecutive_blocks,
+            "agent_turn_count": self.agent_turn_count,
+            "environment_execution_count": self.environment_execution_count,
             "last_trigger_step": self.last_trigger_step,
             "last_action": self.last_action,
         }
@@ -102,6 +106,7 @@ class ControllerConfig:
 
     enabled: bool = True
     max_controller_calls_per_task: int | None = None
+    max_controller_blocks: int | None = None
     max_consecutive_blocks: int | None = None
     fail_open_on_controller_error: bool = True
 
@@ -111,6 +116,7 @@ class InterceptionResult:
     """Core decision about whether proposed execution may continue."""
 
     allow_execution: bool
+    original_result: Any
     original_execution_inputs: Any
     guidance_message: str | None = None
     trigger_result: TriggerResult | None = None
