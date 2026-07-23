@@ -1,8 +1,14 @@
-# Coverage-Aware Controller Agent
+# AppWorld Controller Agent
 
-This repository now focuses on one project: a `simple_react + controller` execution method for AppWorld.
+This repository contains the controller runtime for AppWorld:
 
-The old AFTraj diagnosis-aware compaction code is preserved on:
+```text
+AppWorld simplified ReAct Agent + Coverage-Aware Controller + dense checkpoints
+```
+
+The repository used to be named `diagnosis-aware-compaction`, but the active
+project is now `appworld-controller-agent`. The old AFTraj diagnosis-aware
+compaction code is preserved on:
 
 ```cmd
 obsolete/diagnosis-aware-compaction-legacy
@@ -14,6 +20,21 @@ The active code implements a thin controller wrapper around a simplified ReAct-s
 
 This project does not vendor AppWorld. Keep the official AppWorld repository and raw trajectories outside Git, and connect this package to AppWorld through an `ExecutionInterceptionAdapter`.
 
+Recommended local workspace:
+
+```text
+workspace/
+  appworld/                    # official AppWorld repository and task outputs
+  appworld-controller-agent/   # this repository
+```
+
+On the current machine these are:
+
+```text
+D:\TY\SJTU\CIS\adaptive_compaction_validation\appworld
+D:\TY\SJTU\CIS\diagnosis-aware-compaction
+```
+
 ## Layout
 
 ```text
@@ -23,10 +44,16 @@ controller_agent/
   state/            Dataclasses and visible-state construction.
   integration/      Controlled ReAct wrapper and interception adapter boundary.
   logging/          Structured controller event logger.
+  branching/        Runtime checkpoint capture and static replay prototypes.
   tests/            Mock-based unit tests. No real API calls.
 docs/
   architecture.md   Main loop, interfaces, and dependency notes.
   appworld_integration_notes.md
+scripts/
+  run_controller_api_smoke.py  Single-task controlled AppWorld runner.
+  run_train_part.cmd           CMD template for per-member task collection.
+task_ids/
+  train_parts/                 Five train task-id splits for collection.
 ```
 
 ## Development
@@ -39,6 +66,50 @@ python -m pytest
 ```
 
 No real AppWorld task or model API call is launched by the unit tests.
+
+## Trajectory Collection
+
+Each member can run one task-id part file. The model and Agent configuration are
+fixed in `scripts/run_controller_api_smoke.py`:
+
+- model: `qwen3-coder-flash-2025-07-28`
+- endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1`
+- agent: `simplified_react_code_agent`
+- temperature: `0.0`
+- seed: `100`
+- thinking: disabled
+
+Required local secret:
+
+```text
+<appworld>\experiments\.env
+```
+
+with:
+
+```text
+DASHSCOPE_API_KEY=...
+```
+
+Run a split from CMD:
+
+```cmd
+cd /d D:\TY\SJTU\CIS\diagnosis-aware-compaction
+scripts\run_train_part.cmd task_ids\train_parts\train_task_ids_part_1.txt
+```
+
+Outputs are task-local under AppWorld:
+
+```text
+<appworld>\experiments\outputs\controlled_react_checkpoint_collection\tasks\<task_id>\
+  logs\
+  evaluation\
+  controller\
+  checkpoints\
+```
+
+The `checkpoints\manifest.json` file indexes all `pre_action`,
+`post_observation`, and `terminal` records for that task.
 
 ## Current Contract
 
