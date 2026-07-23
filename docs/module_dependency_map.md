@@ -1,6 +1,6 @@
 # Module Dependency Map
 
-Repository: `D:\TY\SJTU\CIS\diagnosis-aware-compaction`
+Repository: `D:\TY\SJTU\CIS\coverage-aware-controller`
 
 This document separates implemented dependencies, interface-only dependencies, and missing dependencies so team members can extend the project without modifying frozen core files.
 

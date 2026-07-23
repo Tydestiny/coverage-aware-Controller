@@ -2,7 +2,7 @@
 
 Audit date: 2026-07-23
 
-Repository: `D:\TY\SJTU\CIS\diagnosis-aware-compaction`
+Repository: `D:\TY\SJTU\CIS\coverage-aware-controller`
 
 Active project: Coverage-Aware Controller Agent for AppWorld, specifically a `simplified_react_code_agent + controller` execution method.
 

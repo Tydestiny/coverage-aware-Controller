@@ -9,6 +9,11 @@ if "%~1"=="" (
 set "CONTROLLER_REPO=%~dp0.."
 for %%I in ("%CONTROLLER_REPO%") do set "CONTROLLER_REPO=%%~fI"
 
+set "APPWORLD_ROOT_CHECK=%APPWORLD_ROOT: =%"
+if "%APPWORLD_ROOT_CHECK%"=="" (
+  set "APPWORLD_ROOT=%CONTROLLER_REPO%\..\appworld"
+  for %%I in ("%APPWORLD_ROOT%") do set "APPWORLD_ROOT=%%~fI"
+)
 if "%APPWORLD_ROOT%"=="" (
   set "APPWORLD_ROOT=%CONTROLLER_REPO%\..\appworld"
   for %%I in ("%APPWORLD_ROOT%") do set "APPWORLD_ROOT=%%~fI"
@@ -27,7 +32,7 @@ cd /d "%APPWORLD_ROOT%" || exit /b 1
 for /f "usebackq tokens=*" %%t in ("%TASK_LIST%") do (
   if not "%%t"=="" (
     echo === Collecting task %%t ===
-    uv run python "%CONTROLLER_REPO%\scripts\run_controller_api_smoke.py" --execute --task-id %%t --capture-checkpoints --max-cost-cny 1.0 --appworld-root "%APPWORLD_ROOT%"
+    uv run python "%CONTROLLER_REPO%\scripts\collect_with_checkpoints.py" --execute --task-id %%t --max-cost-cny 1.0 --appworld-root "%APPWORLD_ROOT%"
     if errorlevel 1 (
       echo TASK_FAILED %%t
     )

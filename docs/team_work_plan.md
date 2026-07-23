@@ -2,7 +2,7 @@
 
 Project: Coverage-Aware Controller Agent for AppWorld
 
-Repository: `D:\TY\SJTU\CIS\diagnosis-aware-compaction`
+Repository: `D:\TY\SJTU\CIS\coverage-aware-controller`
 
 Team size: 5 people, including the project lead.
 

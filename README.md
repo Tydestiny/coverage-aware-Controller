@@ -1,4 +1,4 @@
-﻿# AppWorld Controller Agent
+# Coverage-Aware Controller
 
 This repository contains the controller runtime for AppWorld:
 
@@ -7,7 +7,7 @@ AppWorld simplified ReAct Agent + Coverage-Aware Controller + dense checkpoints
 ```
 
 The repository used to be named `diagnosis-aware-compaction`, but the active
-project is now `appworld-controller-agent`. The old AFTraj diagnosis-aware
+project is now `coverage-aware-controller`. The old AFTraj diagnosis-aware
 compaction code is preserved on:
 
 ```cmd
@@ -25,14 +25,14 @@ Recommended local workspace:
 ```text
 workspace/
   appworld/                    # official AppWorld repository and task outputs
-  appworld-controller-agent/   # this repository
+  coverage-aware-controller/   # this repository
 ```
 
 On the current machine these are:
 
 ```text
 D:\TY\SJTU\CIS\appworld
-D:\TY\SJTU\CIS\diagnosis-aware-compaction
+D:\TY\SJTU\CIS\coverage-aware-controller
 ```
 
 ## Layout
@@ -61,7 +61,7 @@ task_ids/
 Run tests from CMD:
 
 ```cmd
-cd /d D:\TY\SJTU\CIS\diagnosis-aware-compaction
+cd /d D:\TY\SJTU\CIS\coverage-aware-controller
 python -m pytest
 ```
 
@@ -94,7 +94,7 @@ DASHSCOPE_API_KEY=...
 Run a split from CMD:
 
 ```cmd
-cd /d D:\TY\SJTU\CIS\diagnosis-aware-compaction
+cd /d D:\TY\SJTU\CIS\coverage-aware-controller
 scripts\run_train_part.cmd task_ids\train_parts\train_task_ids_part_1.txt
 ```
 
