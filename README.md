@@ -1,104 +1,54 @@
-# diagnosis-aware-compaction
+# Coverage-Aware Controller Agent
 
-Preprocessing-only pipeline for converting AFTraj-2K JSON/JSONL exports into Canonical Trajectory Schema v1.1. It does not implement a compactor, verifier, LLM call, or model training.
+This repository now focuses on one project: a `simple_react + controller` execution method for AppWorld.
 
-The repository may contain a temporary dataset snapshot; generated artifacts remain reproducible from the scripts.
+The old AFTraj diagnosis-aware compaction code is preserved on:
 
-## Prerequisites
-
-- Python 3.11+
-- `pytest` for the test suite
-
-The source parser supports JSON and JSONL. The supplied files under `dataset/AFTraj-2K/` are streamed to JSONL with PyArrow; source Parquet files remain untouched and generated data stays ignored by Git.
-
-## Confirmed AFTraj conventions
-
-The current AFTraj-2K export uses 0-based `mistake_step`. Safe records have no `mistake_step`; canonical conversion writes their `unsafe_source` and `label_source` as `safe`. Malformed records are rejected and recorded in `rejected_records.jsonl`.
-
-## Workflow
-
-```bash
-python scripts/parquet_to_jsonl.py \
-  --input dataset/AFTraj-2K/aftraj_safe.parquet dataset/AFTraj-2K/aftraj_unsafe.parquet \
-  --output data/raw/aftraj.jsonl \
-  --manifest data/manifests/parquet_conversion.json
-
-python scripts/convert_aftraj.py \
-  --input data/raw/aftraj.jsonl \
-    --output data/processed/v1_1/aftraj_all.jsonl \
-    --rejected data/processed/v1_1/rejected_records.jsonl \
-  --mistake-step-base 0
-
-python scripts/build_splits.py \
-    --input data/processed/v1_1/aftraj_all.jsonl \
-    --output-dir data/processed/v1_1 \
-    --manifest-dir data/manifests/v1_1 \
-  --seed 42
-
-python scripts/build_prefixes.py \
-    --input-dir data/processed/v1_1 \
-    --output-dir data/processed/v1_1/prefixes \
-  --mode onset_window \
-  --window=-3,-2,-1,0,1,2,3 \
-  --seed 42
-
-python scripts/generate_report.py \
-    --trajectory-dir data/processed/v1_1 \
-    --prefix-dir data/processed/v1_1/prefixes \
-    --output-json data/processed/v1_1/dataset_report.json \
-    --output-md data/processed/v1_1/dataset_report.md
-
-python scripts/generate_audit.py \
-  --conversion-manifest data/manifests/parquet_conversion.json \
-    --dataset-report data/processed/v1_1/dataset_report.json \
-  --mistake-step-base 0 \
-    --output data/processed/v1_1/aftraj_data_audit.md
+```cmd
+obsolete/diagnosis-aware-compaction-legacy
 ```
 
-Canonical conversion preserves exactly one `CanonicalStep` per source turn, keeps every `raw_step`, uses the confirmed 0-based AFTraj label, assigns families before splitting, and creates every prefix with `steps[:prefix_end_step + 1]` only.
+## Scope
 
-## Schema migration
+The active code implements a thin controller wrapper around a simplified ReAct-style AppWorld agent. The first controller trigger is `before_finish`: when the base agent attempts to call `supervisor.complete_task`, the wrapper can allow the finish action or block it and inject temporary guidance for the next turn.
 
-Migrate an existing v1.0 canonical JSONL without reading Parquet:
+This project does not vendor AppWorld. Keep the official AppWorld repository and raw trajectories outside Git, and connect this package to AppWorld through integration code and experiment configs.
 
-```bash
-python scripts/migrate_schema_v1_to_v1_1.py \
-  --input data/processed/v1_0/aftraj_all.jsonl \
-  --output data/processed/v1_1/aftraj_all.jsonl \
-  --rejected data/processed/v1_1/rejected_records.jsonl \
-  --stats-output data/manifests/v1_1/schema_migration_v1_1.json
+## Layout
 
-python scripts/build_splits.py \
-  --input data/processed/v1_1/aftraj_all.jsonl \
-  --output-dir data/processed/v1_1 \
-  --manifest-dir data/manifests/v1_1 \
-  --seed 42
+```text
+controller_agent/
+  controller/       Controller decision adapter and guidance formatting.
+  triggers/         Trigger interfaces and before-finish trigger.
+  state/            Dataclasses and visible-state construction.
+  integration/      Controlled ReAct wrapper.
+  logging/          Structured controller event logger.
+  tests/            Mock-based unit tests. No real API calls.
+docs/
+  architecture.md   Main loop, interfaces, and dependency notes.
+```
 
-python scripts/build_prefixes.py \
-  --input-dir data/processed/v1_1 \
-  --output-dir data/processed/v1_1/prefixes \
-  --mode onset_window \
-  --window=-3,-2,-1,0,1,2,3 \
-  --seed 42
+## Development
 
-python scripts/check_migration_consistency.py \
-  --before data/processed/v1_0/aftraj_all.jsonl \
-  --after data/processed/v1_1/aftraj_all.jsonl \
-  --before-prefix-dir data/processed/v1_0/prefixes \
-  --after-prefix-dir data/processed/v1_1/prefixes \
-  --output data/manifests/v1_1/migration_consistency_v1_1.json
-  ```
+Run tests from CMD:
 
-## Processed data layout
+```cmd
+cd /d D:\TY\SJTU\CIS\diagnosis-aware-compaction
+python -m pytest
+```
 
-`data/processed/v1_1/` is the current canonical output and contains the
-versioned trajectory JSONL, split files, prefixes, report, and audit document.
-The previous representation is retained only under `data/processed/v1_0/` for
-migration comparison and reproducibility. The processed-data root intentionally
-contains no trajectory files.
+No real AppWorld task or model API call is launched by the unit tests.
 
-See [docs/canonical_schema.md](docs/canonical_schema.md) for the v1.1 field contract. Old v1.0 labels are migration input only; new generated JSONL uses `annotations.primary_error` and the structured outcome/step schemas.
+## Current Contract
 
-## Model input boundary
+When controller mode is disabled, `ControlledReActAgent` delegates directly to the wrapped base agent.
 
-`CanonicalTrajectory` is a storage and evaluation object. `ModelInputView` from `src/agent_error_compaction/views.py` is the only valid input to future Compactors and Verifiers. It contains only `task`, `tools`, and the requested prefix of whitelisted step fields. Labels, family/split identifiers, final answers, outcomes, raw steps, metadata, and diagnostic fields are reserved for `build_evaluation_view` and must not be passed to a model.
+When controller mode is enabled:
+
+1. The wrapped agent generates its normal next execution input.
+2. `BeforeFinishTrigger` checks whether the agent is attempting `supervisor.complete_task`.
+3. `StateBuilder` builds a controller input from visible task/history/output only.
+4. `Controller.decide` returns one of:
+   `PROCEED`, `VERIFY_TARGET_SET`, `LOOKUP_API_SPEC`, `REPLAN`, `BLOCK_RISKY_ACTION`.
+5. `PROCEED` returns the original execution input.
+6. Any other action blocks the finish call and appends temporary guidance for the next turn.

@@ -1,3 +1,0 @@
-{"conv_id":"safe-1","domain":"demo","task":"Add two values","gold_answer":"3","tools":[],"turns":[{"actor":"assistant","content":"I will calculate.","action":null},{"actor":"tool","observation":{"value":3}}],"mistake_step":null,"unsafe_source":null}
-{"conv_id":"failed-1","domain":"demo","task":"Find a value","gold_answer":"3","tools":["search"],"turns":[{"actor":"assistant","thought":"Plan search","content":"Searching"},{"actor":"assistant","action":{"name":"search","arguments":{"q":"wrong"}}},{"actor":"tool","observation":"incorrect result"}],"mistake_step":1,"mistake_agent":"assistant","mistake_reason":"source-provided reason","unsafe_source":"injected"}
-

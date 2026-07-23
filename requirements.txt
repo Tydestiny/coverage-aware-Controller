@@ -1,5 +1,1 @@
-# Runtime dependency for streaming Parquet input:
-pyarrow>=15.0,<24.0
-
-# Development and test dependency:
-pytest>=8.0,<9.0
+pytest>=8.0
