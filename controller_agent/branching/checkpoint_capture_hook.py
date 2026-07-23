@@ -31,6 +31,7 @@ class RuntimeCheckpointCaptureHook:
         task_id: str,
         appworld_code_version: str | None = None,
         appworld_data_version: str | None = None,
+        base_dir: Path | None = None,
     ) -> None:
         self.manager = RuntimeCheckpointManager(
             root_dir=root_dir,
@@ -38,6 +39,7 @@ class RuntimeCheckpointCaptureHook:
             task_id=task_id,
             appworld_code_version=appworld_code_version,
             appworld_data_version=appworld_data_version,
+            base_dir=base_dir,
         )
 
     def on_pre_action(self, **kwargs: Any) -> Any:
@@ -51,4 +53,3 @@ class RuntimeCheckpointCaptureHook:
     def on_terminal(self, **kwargs: Any) -> Any:
         """Capture terminal metadata."""
         return self.manager.capture_terminal(**kwargs)
-

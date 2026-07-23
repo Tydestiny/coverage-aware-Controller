@@ -58,6 +58,30 @@ def test_pre_action_references_recent_post_checkpoint(tmp_path: Path) -> None:
     assert "appworld_state_id" not in pre_records[1]
 
 
+def test_task_local_base_dir_stores_checkpoints_next_to_trajectory(tmp_path: Path) -> None:
+    """Task-local layout writes manifest directly under the requested checkpoint directory."""
+    task_output_dir = tmp_path / "outputs" / "controlled_run" / "tasks" / "scripted-task"
+    hook = RuntimeCheckpointCaptureHook(
+        root_dir=tmp_path / "unused-central-root",
+        run_id="run-1",
+        task_id="scripted-task",
+        base_dir=task_output_dir / "checkpoints",
+    )
+    agent = ScriptedAgent()
+    controlled = ControlledReActAgent(
+        agent,
+        controller=DeterministicSmokeController(),
+        config=ControllerConfig(enabled=True, max_controller_calls_per_task=2),
+        integration_adapter=AppWorldInterceptionAdapter(),
+    )
+    runner = ControlledAppWorldRunner(controlled, checkpoint_capture_hook=hook)
+
+    runner.run_initialized_world(SavingScriptedWorld())
+
+    assert (task_output_dir / "checkpoints" / "manifest.json").exists()
+    assert not (tmp_path / "unused-central-root" / "run-1" / "scripted-task" / "manifest.json").exists()
+
+
 def test_blocked_complete_task_has_no_post_observation_checkpoint(tmp_path: Path) -> None:
     """Blocked complete_task is recorded as pre-action but does not save environment state."""
     runner, world, _ = make_collecting_runner(tmp_path)

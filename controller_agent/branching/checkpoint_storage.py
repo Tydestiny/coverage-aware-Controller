@@ -14,9 +14,9 @@ FORBIDDEN_KEYS = {"ground_truth", "evaluator", "evaluation", "hidden_state"}
 class CheckpointStorage:
     """Store runtime checkpoints and an index manifest."""
 
-    def __init__(self, root_dir: Path, run_id: str, task_id: str) -> None:
+    def __init__(self, root_dir: Path, run_id: str, task_id: str, base_dir: Path | None = None) -> None:
         self.task_id = task_id
-        self.base_dir = root_dir / run_id / task_id
+        self.base_dir = base_dir if base_dir is not None else root_dir / run_id / task_id
         self.post_dir = self.base_dir / "post_observation"
         self.pre_dir = self.base_dir / "pre_action"
         self.post_dir.mkdir(parents=True, exist_ok=True)
@@ -81,6 +81,7 @@ class CheckpointStorage:
 
     def _write_json(self, path: Path, data: Any) -> None:
         """Write JSON data."""
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def _to_jsonable(self, value: Any) -> Any:
@@ -108,4 +109,3 @@ class CheckpointStorage:
         elif isinstance(value, list):
             for index, item in enumerate(value):
                 self._assert_no_forbidden_keys(item, f"{path}[{index}]")
-

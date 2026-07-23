@@ -34,8 +34,9 @@ class RuntimeCheckpointManager:
         namespace_adapter: NamespaceAdapter | None = None,
         appworld_code_version: str | None = None,
         appworld_data_version: str | None = None,
+        base_dir: Path | None = None,
     ) -> None:
-        self.storage = CheckpointStorage(root_dir, run_id, task_id)
+        self.storage = CheckpointStorage(root_dir, run_id, task_id, base_dir=base_dir)
         self.task_id = task_id
         self.namespace_adapter = namespace_adapter or ReplayRequiredNamespaceAdapter()
         self.appworld_code_version = appworld_code_version
@@ -161,4 +162,3 @@ class RuntimeCheckpointManager:
     def _timestamp(self) -> str:
         """Return an ISO timestamp."""
         return datetime.now(timezone.utc).isoformat()
-

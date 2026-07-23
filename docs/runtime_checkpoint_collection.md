@@ -87,17 +87,41 @@ This explicitly covers the earlier logging gap where final `complete_task` outpu
 
 ## Storage Layout
 
-Runtime checkpoints are stored as:
+The default runtime collection layout is task-local. New AppWorld trajectory
+collection runs should keep controller records and checkpoints next to the
+official AppWorld task logs:
 
 ```text
-results/checkpoints/<run_id>/<task_id>/
-  manifest.json
-  post_observation/
-  pre_action/
-  terminal.json
+<appworld_root>/experiments/outputs/<experiment_name>/tasks/<task_id>/
+  logs/
+  evaluation/
+  dbs/
+  misc/
+  version/
+  controller/
+    config.json
+    turn_events.jsonl
+    controller_events.jsonl
+    evaluator_result.json
+    final_smoke_report.md
+  checkpoints/
+    manifest.json
+    post_observation/
+    pre_action/
+    terminal.json
 ```
 
 `manifest.json` indexes every pre-action record and post-observation checkpoint, so offline trigger screening can locate the closest runnable state for any Agent turn.
+
+The older central layout is still supported for tests and early validation:
+
+```text
+results/checkpoints/<run_id>/<task_id>/
+```
+
+Use central layout only for mock runs or temporary validation artifacts. Use
+task-local layout for any trajectory collection intended for downstream
+checkpoint selection or branch experiments.
 
 ## Namespace Restore
 

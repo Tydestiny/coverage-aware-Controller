@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from controller_agent.controller.smoke import DeterministicSmokeController
+from controller_agent.branching.checkpoint_capture_hook import RuntimeCheckpointCaptureHook
 from controller_agent.integration.appworld_adapter import ControlledAppWorldRunner, GUIDANCE_MARKER, RunnerBudget
 from controller_agent.integration.controlled_react_agent import ControlledReActAgent
 from controller_agent.logging.logger import ExperimentLogger
@@ -31,7 +32,8 @@ def main() -> int:
     """Run the smoke test CLI."""
     args = parse_args()
     appworld_root = Path(args.appworld_root).resolve()
-    output_dir = Path(args.output_dir).resolve()
+    task_output_dir = appworld_task_output_dir(appworld_root, args.experiment_name, args.task_id)
+    output_dir = Path(args.output_dir).resolve() if args.output_dir else task_output_dir / "controller"
     output_dir.mkdir(parents=True, exist_ok=True)
     clean_output_dir(output_dir)
     load_dotenv(appworld_root / "experiments" / ".env")
@@ -66,11 +68,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-extra-agent-turns-after-block", type=int, default=3)
     parser.add_argument("--max-cost-cny", type=float, default=1.0)
     parser.add_argument("--retry-once", action="store_true", default=True)
+    parser.add_argument("--capture-checkpoints", action="store_true")
+    parser.add_argument("--checkpoint-root", default=str(REPO_ROOT / "results" / "checkpoints"))
+    parser.add_argument("--checkpoint-run-id", default="controller_api_smoke")
+    parser.add_argument("--checkpoint-layout", choices=["task_local", "central"], default="task_local")
+    parser.add_argument("--experiment-name", default="controlled_react_checkpoint_collection")
     parser.add_argument(
         "--appworld-root",
         default=str(REPO_ROOT.parent / "adaptive_compaction_validation" / "appworld"),
     )
-    parser.add_argument("--output-dir", default=str(REPO_ROOT / "results" / "controller_integration_smoke_final"))
+    parser.add_argument("--output-dir", default=None)
     return parser.parse_args()
 
 
@@ -111,9 +118,22 @@ def run_once(
         max_extra_agent_turns_after_block=args.max_extra_agent_turns_after_block,
         max_cost_cny=args.max_cost_cny,
     )
+    checkpoint_hook = (
+        RuntimeCheckpointCaptureHook(
+            root_dir=Path(args.checkpoint_root).resolve(),
+            run_id=args.checkpoint_run_id,
+            task_id=args.task_id,
+            appworld_code_version=read_text_if_exists(appworld_root / "version" / "code.txt"),
+            appworld_data_version=read_text_if_exists(appworld_root / "version" / "data.txt"),
+            base_dir=checkpoint_base_dir(args, appworld_root),
+        )
+        if args.capture_checkpoints
+        else None
+    )
     runner = ControlledAppWorldRunner(
         controlled,
         budget=budget,
+        checkpoint_capture_hook=checkpoint_hook,
     )
     evaluator_result: dict[str, Any] = {}
     started = time.perf_counter()
@@ -122,7 +142,7 @@ def run_once(
     try:
         with AppWorld.initializer(
             update_defaults=True,
-            experiment_name="controller_integration_smoke",
+            experiment_name=args.experiment_name,
             random_seed=100,
             raise_on_extra_parameters=True,
         ):
@@ -134,11 +154,26 @@ def run_once(
     wall_time = time.perf_counter() - started
     events = [with_wall_total(event, wall_time) for event in runner.turn_events]
     messages = sanitize_messages(getattr(base_agent, "messages", []))
+    write_json(output_dir / "config.json", config)
     write_jsonl(output_dir / "turn_events.jsonl", events)
     write_jsonl(output_dir / "controller_events.jsonl", sanitize_messages(logger.events))
     write_json(output_dir / "evaluator_result.json", evaluator_result)
+    checkpoint_manifest = checkpoint_manifest_path(args, appworld_root) if args.capture_checkpoints else None
     category = classify_result(events, messages, runner.stop_reason, evaluator_result)
-    write_report(output_dir, config | {"retry_index": retry_index}, events, logger.events, messages, evaluator_result, category, runner.stop_reason)
+    write_report(
+        output_dir,
+        config | {
+            "retry_index": retry_index,
+            "checkpoint_manifest": str(checkpoint_manifest) if checkpoint_manifest else None,
+            "checkpoint_hook_errors": runner.checkpoint_hook_errors,
+        },
+        events,
+        logger.events,
+        messages,
+        evaluator_result,
+        category,
+        runner.stop_reason,
+    )
     return 0 if category in {"integration_success", "model_task_failure"} else 1
 
 
@@ -214,6 +249,12 @@ def build_config(args: argparse.Namespace, appworld_root: Path) -> dict[str, Any
         "api_endpoint": API_ENDPOINT,
         "appworld_root": str(appworld_root),
         "temperature": 0.0,
+        "capture_checkpoints": args.capture_checkpoints,
+        "checkpoint_root": str(Path(args.checkpoint_root).resolve()),
+        "checkpoint_run_id": args.checkpoint_run_id,
+        "checkpoint_layout": args.checkpoint_layout,
+        "experiment_name": args.experiment_name,
+        "task_output_dir": str(appworld_task_output_dir(appworld_root, args.experiment_name, args.task_id)),
     }
 
 
@@ -246,6 +287,33 @@ def load_dotenv(path: Path) -> None:
             continue
         key, value = stripped.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+def read_text_if_exists(path: Path) -> str | None:
+    """Return stripped file text when present."""
+    if not path.exists():
+        return None
+    return path.read_text(encoding="utf-8").strip()
+
+
+def appworld_task_output_dir(appworld_root: Path, experiment_name: str, task_id: str) -> Path:
+    """Return the AppWorld task output directory used for trajectory files."""
+    return appworld_root / "experiments" / "outputs" / experiment_name / "tasks" / task_id
+
+
+def checkpoint_base_dir(args: argparse.Namespace, appworld_root: Path) -> Path | None:
+    """Return an optional task-local checkpoint directory."""
+    if args.checkpoint_layout == "central":
+        return None
+    return appworld_task_output_dir(appworld_root, args.experiment_name, args.task_id) / "checkpoints"
+
+
+def checkpoint_manifest_path(args: argparse.Namespace, appworld_root: Path) -> Path:
+    """Return the expected runtime checkpoint manifest path."""
+    base_dir = checkpoint_base_dir(args, appworld_root)
+    if base_dir is not None:
+        return base_dir / "manifest.json"
+    return Path(args.checkpoint_root).resolve() / args.checkpoint_run_id / args.task_id / "manifest.json"
 
 
 def evaluate_world(world: Any) -> dict[str, Any]:
@@ -353,6 +421,7 @@ def with_wall_total(event: dict[str, Any], total_wall_time: float) -> dict[str, 
 
 def write_json(path: Path, data: Any) -> None:
     """Write JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(sanitize_messages(data), indent=2, ensure_ascii=False), encoding="utf-8")
 
 
@@ -372,6 +441,7 @@ def clean_output_dir(output_dir: Path) -> None:
 
 def write_jsonl(path: Path, rows: list[Any]) -> None:
     """Write JSONL."""
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "".join(json.dumps(sanitize_messages(row), ensure_ascii=False) + "\n" for row in rows),
         encoding="utf-8",
@@ -431,6 +501,11 @@ Termination reason: {stop_reason}
 - max_extra_agent_turns_after_block: {config.get("max_extra_agent_turns_after_block")}
 - max cost: {config.get("maximum_cost_cny")}
 - endpoint: {config.get("api_endpoint")}
+- checkpoint capture: {config.get("capture_checkpoints")}
+- checkpoint layout: {config.get("checkpoint_layout")}
+- checkpoint manifest: {config.get("checkpoint_manifest")}
+- AppWorld task output: {config.get("task_output_dir")}
+- checkpoint hook errors: {json.dumps(config.get("checkpoint_hook_errors", []), ensure_ascii=False)}
 
 ## Questions
 
