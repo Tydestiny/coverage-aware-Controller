@@ -14,7 +14,7 @@ test = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
 addopts = "-q"
-testpaths = ["controller_agent/tests"]
+testpaths = ["controller_agent/tests", "controller_agent/branching/tests"]
 pythonpath = ["."]
 
 [tool.setuptools.packages.find]

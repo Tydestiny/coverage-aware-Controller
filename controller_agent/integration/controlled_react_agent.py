@@ -1,4 +1,9 @@
-"""Offline-testable wrapper around simplified_react_code_agent."""
+"""Offline-testable wrapper around simplified_react_code_agent.
+
+Core interface status: frozen for the Coverage-Aware Controller v0 core.
+New triggers, state builders, controller backends, and runtime adapters should
+plug into this wrapper through the existing constructor interfaces.
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,9 @@
-"""Minimal AppWorld integration adapter for Controller interception."""
+"""Minimal AppWorld integration adapter for Controller interception.
+
+Core interface status: frozen for the Coverage-Aware Controller v0 core.
+This module owns AppWorld runtime lifecycle and budget accounting; extension
+modules must not bypass it to mutate AppWorld execution code directly.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +11,7 @@ from dataclasses import dataclass
 import time
 from typing import Any, Sequence
 
+from controller_agent.branching.checkpoint_capture_hook import CheckpointCaptureHook
 from controller_agent.integration.base import ExecutionInterceptionAdapter
 from controller_agent.state.schemas import InterceptionResult
 
@@ -84,6 +90,7 @@ class ControlledAppWorldRunner:
         adapter: ExecutionInterceptionAdapter | None = None,
         budget: RunnerBudget | None = None,
         max_extra_turns_after_first_block: int | None = None,
+        checkpoint_capture_hook: CheckpointCaptureHook | None = None,
     ) -> None:
         self.agent = agent
         self.adapter = adapter or AppWorldInterceptionAdapter()
@@ -100,6 +107,10 @@ class ControlledAppWorldRunner:
         self.empty_code_retry_used = False
         self.cumulative_input_tokens = 0
         self.cumulative_output_tokens = 0
+        self.cumulative_controller_input_tokens = 0
+        self.cumulative_controller_output_tokens = 0
+        self.checkpoint_capture_hook = checkpoint_capture_hook
+        self.checkpoint_hook_errors: list[str] = []
         if hasattr(agent, "integration_adapter"):
             agent.integration_adapter = self.adapter
 
@@ -118,6 +129,13 @@ class ControlledAppWorldRunner:
             result = self.agent.next_execution_inputs_usage_and_status(execution_outputs)
             if isinstance(result, AppWorldInterceptionApplied):
                 self._record_usage_from_result(task_id, result.original_result)
+                self._capture_pre_action(
+                    task_id=task_id,
+                    proposed_execution=self._first_code(result.interception.original_execution_inputs),
+                    last_execution_outputs=execution_outputs,
+                    previous_execution_had_error=self._outputs_have_error(execution_outputs),
+                )
+                self._record_controller_usage(result.interception.controller_response)
                 if self.first_block_turn is None:
                     self.first_block_turn = self._runtime_state().agent_turn_count
                 self.turn_events.append(self._blocked_event(result, world, turn_start))
@@ -133,6 +151,12 @@ class ControlledAppWorldRunner:
                 continue
             execution_inputs, usage, status = result
             self._record_usage_from_result(task_id, result)
+            self._capture_pre_action(
+                task_id=task_id,
+                proposed_execution=self._first_code(execution_inputs),
+                last_execution_outputs=execution_outputs,
+                previous_execution_had_error=self._outputs_have_error(execution_outputs),
+            )
             if getattr(status, "failed", False):
                 self.stop_reason = "runner_or_api_error"
                 self._log_termination(getattr(status, "message", ""))
@@ -173,6 +197,13 @@ class ControlledAppWorldRunner:
                 type(item)(content=output, metadata=item.metadata)
                 for item, output in zip(execution_inputs, outputs, strict=True)
             ]
+            for item, output in zip(execution_inputs, execution_outputs, strict=True):
+                self._capture_post_observation(
+                    world=world,
+                    task_id=task_id,
+                    executed_code=str(getattr(item, "content", "")),
+                    last_execution_outputs=[output],
+                )
             task_completed = bool(world.task_completed())
             self.turn_events.append(
                 self._executed_event(result, execution_inputs, world, task_completed, turn_start)
@@ -197,6 +228,7 @@ class ControlledAppWorldRunner:
             self.stop_reason = "max_agent_turns_reached"
             if self.turn_events:
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
+        self._capture_terminal(world)
 
     def _log_termination(self, message: str) -> None:
         """Log termination if the wrapped agent exposes an AppWorld logger."""
@@ -221,6 +253,13 @@ class ControlledAppWorldRunner:
         self.cumulative_input_tokens += int(self._usage_tokens(usage, "input_tokens") or 0)
         self.cumulative_output_tokens += int(self._usage_tokens(usage, "output_tokens") or 0)
         self._record_usage(task_id, usage)
+
+    def _record_controller_usage(self, response: Any) -> None:
+        """Accumulate controller usage metadata when present."""
+        if response is None:
+            return
+        self.cumulative_controller_input_tokens += int(getattr(response, "input_tokens", None) or 0)
+        self.cumulative_controller_output_tokens += int(getattr(response, "output_tokens", None) or 0)
 
     def _usage_exceeded(self, task_id: str) -> bool:
         """Return whether the wrapped usage tracker has exceeded limits."""
@@ -424,3 +463,94 @@ class ControlledAppWorldRunner:
         usage = getattr(tracker, "overall_usage", None)
         cost = getattr(usage, "cost", None)
         return getattr(cost, "total", None)
+
+    def _capture_pre_action(
+        self,
+        *,
+        task_id: str,
+        proposed_execution: str,
+        last_execution_outputs: Sequence[Any],
+        previous_execution_had_error: bool,
+    ) -> None:
+        """Safely capture pre-action metadata if a hook is configured."""
+        self._safe_hook_call(
+            "on_pre_action",
+            proposed_execution=proposed_execution,
+            agent=self.agent,
+            last_execution_outputs=self._outputs_content(last_execution_outputs),
+            previous_execution_had_error=previous_execution_had_error,
+            agent_turn_index=self._runtime_state().agent_turn_count,
+        )
+
+    def _capture_post_observation(
+        self,
+        *,
+        world: Any,
+        task_id: str,
+        executed_code: str,
+        last_execution_outputs: Sequence[Any],
+    ) -> None:
+        """Safely capture a post-observation checkpoint if configured."""
+        self._safe_hook_call(
+            "on_post_observation",
+            world=world,
+            agent=self.agent,
+            last_execution_outputs=self._outputs_content(last_execution_outputs),
+            executed_code=executed_code,
+            agent_turn_index=self._runtime_state().agent_turn_count,
+            environment_execution_index=self._runtime_state().environment_execution_count,
+            cumulative_agent_tokens={
+                "input": self.cumulative_input_tokens,
+                "output": self.cumulative_output_tokens,
+                "total": self.cumulative_input_tokens + self.cumulative_output_tokens,
+            },
+            cumulative_controller_tokens={
+                "input": self.cumulative_controller_input_tokens,
+                "output": self.cumulative_controller_output_tokens,
+                "total": self.cumulative_controller_input_tokens + self.cumulative_controller_output_tokens,
+            },
+            cumulative_cost=self._total_cost(),
+            controller_runtime_state=self._runtime_state().to_dict(),
+        )
+
+    def _capture_terminal(self, world: Any) -> None:
+        """Safely capture terminal lifecycle metadata."""
+        before_complete_task = any("complete_task" in event.get("generated_code", "") for event in self.turn_events)
+        complete_blocked = any(
+            "complete_task" in event.get("generated_code", "") and not event.get("execution_allowed")
+            for event in self.turn_events
+        )
+        complete_entered = any(
+            "complete_task" in event.get("generated_code", "") and event.get("world_batch_execute_called")
+            for event in self.turn_events
+        )
+        self._safe_hook_call(
+            "on_terminal",
+            before_complete_task=before_complete_task,
+            complete_task_blocked_by_controller=complete_blocked,
+            complete_task_entered_world_batch_execute=complete_entered,
+            task_completed=bool(world.task_completed()),
+            supervisor_status=None,
+            termination_reason=self.stop_reason,
+            evaluator_executed=False,
+        )
+
+    def _safe_hook_call(self, method_name: str, **kwargs: Any) -> None:
+        """Call a checkpoint hook without interrupting the runner."""
+        if self.checkpoint_capture_hook is None:
+            return
+        method = getattr(self.checkpoint_capture_hook, method_name, None)
+        if method is None:
+            return
+        try:
+            method(**kwargs)
+        except Exception as exc:
+            self.checkpoint_hook_errors.append(f"{method_name}: {type(exc).__name__}: {exc}")
+
+    def _outputs_content(self, outputs: Sequence[Any]) -> list[Any]:
+        """Return JSON-friendly output contents."""
+        return [getattr(output, "content", output) for output in outputs]
+
+    def _outputs_have_error(self, outputs: Sequence[Any]) -> bool:
+        """Return whether previous execution output looked like an error."""
+        return any("error" in str(output).lower() or "traceback" in str(output).lower() for output in self._outputs_content(outputs))

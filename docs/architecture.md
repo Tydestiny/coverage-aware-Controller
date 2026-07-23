@@ -31,6 +31,20 @@ When `enabled=False`, the wrapper returns the base agent result unchanged and do
 
 The core controller loop does not mutate execution code and does not use empty execution inputs as a blocking signal.
 
+## Frozen Core Interfaces
+
+The Coverage-Aware Controller v0 core is frozen around these files:
+
+- `controller_agent/state/schemas.py`
+- `controller_agent/integration/controlled_react_agent.py`
+- `controller_agent/integration/appworld_adapter.py`
+- `controller_agent/integration/base.py`
+- `controller_agent/triggers/base.py`
+
+These modules define the stable data contracts, main wrapper boundary, AppWorld runtime adapter, integration protocol, and trigger protocol. New work should extend through these interfaces rather than changing the main loop.
+
+The core link has passed a real Agent API smoke test with Qwen Coder Flash on AppWorld task `23cf851_1`. The smoke result verified that the first `complete_task` was intercepted, `world.batch_execute` was skipped for the blocked finish attempt, `[CONTROLLER_GUIDANCE]` entered the next model-visible context, the next Agent generation occurred, and the second `complete_task` was allowed. The evaluator reported an incorrect task answer, which is classified as model task failure rather than integration failure.
+
 ## Interfaces
 
 - `TriggerResult`: trigger decision, reason, and metadata.
@@ -97,6 +111,10 @@ The spike therefore adds:
 - `ControlledAppWorldRunner`: a minimal runner wrapper that mirrors the stock step loop but skips `world.batch_execute` for blocked finish attempts.
 - `DeterministicSmokeController`: model-free smoke controller; first `before_finish` returns `VERIFY_TARGET_SET`, second returns `PROCEED`.
 
+`DeterministicSmokeController` is strictly a lifecycle and integration smoke component. It does not call a model API and must not be treated as the real Controller policy.
+
+Future LLM Controllers should be attached through the existing `Controller` backend interface. The backend returns either a `ControllerResponse`, a `ControllerDecision`, a JSON string, or a legacy decision mapping; the stable parser wraps all valid forms into `ControllerResponse`.
+
 Guidance is injected as:
 
 ```text
@@ -117,4 +135,5 @@ Detailed source notes are in `docs/appworld_integration_notes.md`.
 - Invalid controller JSON and controller exceptions fail open to `PROCEED`.
 - A blocking decision is represented as `InterceptionResult`; the core layer does not implement AppWorld-specific suppression.
 - Controller logs must not contain API keys.
-- New triggers, real controller prompts, real model backends, and AppWorld runtime adapters should be implemented after these contracts are reviewed and frozen.
+- New modules must not directly modify the core main loop.
+- New triggers, real controller prompts, real model backends, and additional runtime adapters should be implemented against the frozen contracts in `docs/development_contract.md`.

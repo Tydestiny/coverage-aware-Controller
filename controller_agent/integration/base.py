@@ -1,4 +1,9 @@
-"""Integration boundary for applying execution interception decisions."""
+"""Integration boundary for applying execution interception decisions.
+
+Core interface status: frozen for the Coverage-Aware Controller v0 core.
+Runtime integrations must implement this protocol instead of changing the
+controller inspection logic.
+"""
 
 from __future__ import annotations
 

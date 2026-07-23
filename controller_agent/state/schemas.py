@@ -1,4 +1,9 @@
-"""Stable, model-agnostic data contracts for the Controller layer."""
+"""Stable, model-agnostic data contracts for the Controller layer.
+
+Core interface status: frozen for the Coverage-Aware Controller v0 core.
+Downstream modules may depend on these public dataclasses and helper parsers
+without modifying the controller main loop.
+"""
 
 from __future__ import annotations
 

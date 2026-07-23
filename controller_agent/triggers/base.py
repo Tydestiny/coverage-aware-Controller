@@ -1,4 +1,9 @@
-"""Trigger detector protocol."""
+"""Trigger detector protocol.
+
+Core interface status: frozen for the Coverage-Aware Controller v0 core.
+New trigger detectors should implement this protocol and consume only the
+visible TriggerContext.
+"""
 
 from __future__ import annotations
 
