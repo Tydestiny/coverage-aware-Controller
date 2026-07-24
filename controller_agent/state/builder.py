@@ -20,7 +20,14 @@ class StateBuilder:
         current_agent_output: str,
     ) -> ControllerInput:
         """Create a ControllerInput from task and visible messages."""
-        history = [copy.deepcopy(item) for item in recent_history]
+        history = [
+            {
+                key: copy.deepcopy(item[key])
+                for key in ("role", "content")
+                if key in item
+            }
+            for item in recent_history
+        ]
         text = "\n".join(str(item.get("content", "")) for item in history)
         text += "\n" + (current_agent_output or "")
         entities = sorted(

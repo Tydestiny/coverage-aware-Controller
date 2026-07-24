@@ -123,6 +123,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-total-agent-turns", type=int, default=20)
     parser.add_argument("--max-total-environment-executions", type=int, default=15)
     parser.add_argument("--max-cost-cny", type=float, default=1.0)
+    parser.add_argument(
+        "--no-limits",
+        action="store_true",
+        help="Disable branch-level agent-turn, environment-execution, and cost termination limits.",
+    )
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--worker", action="store_true")
     parser.add_argument("--summarize-only", action="store_true")
@@ -191,6 +196,8 @@ def run_workers(
                 "--only-branch",
                 branch,
             ]
+            if args.no_limits:
+                command.append("--no-limits")
             completed = subprocess.run(command, cwd=str(appworld_root), check=False)
             if completed.returncode != 0:
                 failures.append(f"{annotation['task_id']} {annotation['checkpoint_id']} {branch}: {completed.returncode}")
@@ -305,6 +312,7 @@ def run_branch(
     try:
         checkpoint = load_checkpoint(source_task_dir, checkpoint_id)
         validate_checkpoint_identity(checkpoint, task_id, checkpoint_id)
+        result["pre_action_anchor"] = validate_pre_action_anchor(source_task_dir, annotation)
         experiment_name = f"_branch_tmp/{unique_run_id}"
         appworld_task_dir = appworld_task_output_dir(appworld_root, experiment_name, task_id)
         run_result = continue_from_checkpoint(
@@ -354,11 +362,11 @@ def continue_from_checkpoint(
     task_id = str(checkpoint["task_id"])
     checkpoint_turn = int(checkpoint.get("agent_turn_index") or 0)
     checkpoint_executions = int(checkpoint.get("environment_execution_index") or 0)
-    remaining_turns = max(1, args.max_total_agent_turns - checkpoint_turn)
-    remaining_executions = max(0, args.max_total_environment_executions - checkpoint_executions)
+    remaining_turns = None if args.no_limits else max(1, args.max_total_agent_turns - checkpoint_turn)
+    remaining_executions = None if args.no_limits else max(0, args.max_total_environment_executions - checkpoint_executions)
     agent_args = argparse.Namespace(
-        max_cost_cny=args.max_cost_cny,
-        max_agent_turns=remaining_turns,
+        max_cost_cny=float("inf") if args.no_limits else args.max_cost_cny,
+        max_agent_turns=1_000_000 if remaining_turns is None else remaining_turns,
         max_extra_agent_turns_after_block=0,
     )
     agent = Agent.from_dict(build_agent_config(agent_args, appworld_root))
@@ -392,7 +400,7 @@ def continue_from_checkpoint(
                 ]
                 restore_success = True
                 stop_reason = "unknown"
-                for _ in range(remaining_turns):
+                while remaining_turns is None or len(events) < remaining_turns:
                     turn_start = time.perf_counter()
                     agent.step_number += 1
                     call_result = agent.next_execution_inputs_usage_and_status(execution_outputs)
@@ -407,7 +415,10 @@ def continue_from_checkpoint(
                         stop_reason = "error"
                         events.append(build_event(agent, world, generated_code, False, False, usage, turn_start, "model_format_failure"))
                         break
-                    if count_environment_executions(events) >= remaining_executions:
+                    if (
+                        remaining_executions is not None
+                        and count_environment_executions(events) >= remaining_executions
+                    ):
                         stop_reason = "limit"
                         events.append(build_event(agent, world, generated_code, True, False, usage, turn_start, "environment_limit"))
                         break
@@ -422,11 +433,11 @@ def continue_from_checkpoint(
                         stop_reason = "task_completed"
                         events[-1]["termination_reason"] = stop_reason
                         break
-                    if usage_exceeded(agent, task_id):
+                    if not args.no_limits and usage_exceeded(agent, task_id):
                         stop_reason = "limit"
                         events[-1]["termination_reason"] = "cost_limit"
                         break
-                if stop_reason == "unknown":
+                if stop_reason == "unknown" and remaining_turns is not None:
                     stop_reason = "limit"
                     if events:
                         events[-1]["termination_reason"] = "agent_turn_limit"
@@ -506,6 +517,27 @@ def validate_checkpoint_identity(checkpoint: dict[str, Any], task_id: str, check
         raise ValueError("Checkpoint is missing appworld_state_id")
     if not isinstance(checkpoint.get("agent_messages"), list):
         raise ValueError("Checkpoint is missing agent_messages")
+
+
+def validate_pre_action_anchor(source_task_dir: Path, annotation: dict[str, Any]) -> dict[str, str] | None:
+    """Verify that an optional pre-action record is anchored to this post-observation state."""
+    record_id = annotation.get("pre_action_record_id")
+    if record_id is None:
+        return None
+    if not isinstance(record_id, str) or not record_id:
+        raise ValueError("pre_action_record_id must be a non-empty string when provided.")
+    path = source_task_dir / "checkpoints" / "pre_action" / f"{record_id}.json"
+    if not path.exists():
+        raise FileNotFoundError(f"Missing pre-action record: {path}")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if record.get("phase") != "pre_action":
+        raise ValueError(f"Pre-action record has invalid phase: {record.get('phase')}")
+    if record.get("task_id") != annotation.get("task_id"):
+        raise ValueError("Pre-action record task_id does not match selected task.")
+    checkpoint_id = annotation.get("checkpoint_id")
+    if record.get("latest_post_observation_checkpoint_id") != checkpoint_id:
+        raise ValueError("Pre-action record does not reference selected checkpoint.")
+    return {"record_id": record_id, "checkpoint_id": str(checkpoint_id)}
 
 
 def branch_guidance(branch: str, annotation: dict[str, Any]) -> str:
@@ -884,9 +916,11 @@ def print_run_config(
     print(f"agent: {AGENT_NAME}")
     print(f"temperature: 0.0")
     print(f"seed: {args.seed}")
-    print(f"max_total_agent_turns: {args.max_total_agent_turns}")
-    print(f"max_total_environment_executions: {args.max_total_environment_executions}")
-    print(f"max_cost_cny_per_branch: {args.max_cost_cny}")
+    print(f"limits: {'disabled' if args.no_limits else 'enabled'}")
+    if not args.no_limits:
+        print(f"max_total_agent_turns: {args.max_total_agent_turns}")
+        print(f"max_total_environment_executions: {args.max_total_environment_executions}")
+        print(f"max_cost_cny_per_branch: {args.max_cost_cny}")
     print(f"endpoint: {API_ENDPOINT}")
     print(f"appworld_root: {appworld_root}")
     print(f"permanent_root: {output_root}")
@@ -908,6 +942,7 @@ def build_public_config(
         "agent": AGENT_NAME,
         "temperature": 0.0,
         "seed": args.seed,
+        "limits_disabled": args.no_limits,
         "max_total_agent_turns": args.max_total_agent_turns,
         "max_total_environment_executions": args.max_total_environment_executions,
         "max_cost_cny_per_branch": args.max_cost_cny,

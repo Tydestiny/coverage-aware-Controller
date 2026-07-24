@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
+import pytest
+
 from controller_agent.branching.namespace_restore import restore_python_namespace_from_prefix
+from scripts.run_lightweight_branch_runs import validate_pre_action_anchor
 
 
 class FakeRequester:
@@ -143,3 +148,46 @@ def test_rebuild_python_namespace_does_not_modify_checkpoint_record() -> None:
 
     assert result.success is True
     assert checkpoint == before
+
+
+def test_pre_action_anchor_must_reference_selected_post_observation_checkpoint(tmp_path: Path) -> None:
+    """A light pre-action record can only anchor a matching post-observation checkpoint."""
+    pre_action_dir = tmp_path / "checkpoints" / "pre_action"
+    pre_action_dir.mkdir(parents=True)
+    record = {
+        "record_id": "task_pre_0009",
+        "task_id": "task",
+        "phase": "pre_action",
+        "latest_post_observation_checkpoint_id": "task_post_0008",
+    }
+    (pre_action_dir / "task_pre_0009.json").write_text(json.dumps(record), encoding="utf-8")
+
+    result = validate_pre_action_anchor(
+        tmp_path,
+        {"task_id": "task", "checkpoint_id": "task_post_0008", "pre_action_record_id": "task_pre_0009"},
+    )
+
+    assert result == {"record_id": "task_pre_0009", "checkpoint_id": "task_post_0008"}
+
+
+def test_pre_action_anchor_rejects_non_matching_checkpoint(tmp_path: Path) -> None:
+    """A pre-action record must never be paired with a different environment state."""
+    pre_action_dir = tmp_path / "checkpoints" / "pre_action"
+    pre_action_dir.mkdir(parents=True)
+    (pre_action_dir / "task_pre_0009.json").write_text(
+        json.dumps(
+            {
+                "record_id": "task_pre_0009",
+                "task_id": "task",
+                "phase": "pre_action",
+                "latest_post_observation_checkpoint_id": "task_post_0008",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="does not reference selected checkpoint"):
+        validate_pre_action_anchor(
+            tmp_path,
+            {"task_id": "task", "checkpoint_id": "task_post_0007", "pre_action_record_id": "task_pre_0009"},
+        )
