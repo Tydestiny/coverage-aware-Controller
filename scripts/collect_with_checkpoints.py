@@ -111,6 +111,7 @@ def main() -> int:
                 evaluator_result = evaluate_world(world)
     finally:
         os.chdir(previous_cwd)
+        sanitize_raw_lm_call_log(task_output_dir / "logs" / "lm_calls.jsonl")
 
     wall_time = time.perf_counter() - started
     events = [event | {"total_wall_time_seconds": wall_time} for event in runner.turn_events]
@@ -232,6 +233,24 @@ def clean_output_dir(output_dir: Path) -> None:
         path = output_dir / name
         if path.exists():
             path.unlink()
+
+
+def sanitize_raw_lm_call_log(path: Path) -> None:
+    """Redact sensitive request fields from AppWorld's native LM call log."""
+    if not path.exists():
+        return
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON in native LM call log at line {line_number}: {path}") from exc
+        if not isinstance(row, dict):
+            raise ValueError(f"Native LM call log row {line_number} is not a JSON object: {path}")
+        rows.append(sanitize_messages(row))
+    write_jsonl(path, rows)
 
 
 def write_report(
