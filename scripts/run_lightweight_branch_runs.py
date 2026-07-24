@@ -129,6 +129,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--only-task-id", default=None)
     parser.add_argument("--only-checkpoint-id", default=None)
     parser.add_argument("--only-branch", choices=OPTIONAL_BRANCHES, default=None)
+    parser.add_argument(
+        "--output-branch-name",
+        default=None,
+        help="Optional safe directory label for one branch rerun; does not change guidance semantics.",
+    )
     parser.add_argument("--cleanup-leftovers", action="store_true")
     return parser.parse_args()
 
@@ -286,7 +291,8 @@ def run_branch(
     """Restore one checkpoint, inject one guidance message, and run a branch."""
     task_id = str(annotation["task_id"])
     checkpoint_id = str(annotation["checkpoint_id"])
-    branch_dir = permanent_run_dir(branch_root, task_id, checkpoint_id, branch)
+    output_branch_name = validate_output_branch_name(args.output_branch_name) if args.output_branch_name else branch
+    branch_dir = permanent_run_dir(branch_root, task_id, checkpoint_id, output_branch_name)
     prepare_branch_dir(branch_dir)
     result = result_template(task_id, checkpoint_id, branch, annotation)
     unique_run_id = build_unique_run_id(args.experiment_id, task_id, checkpoint_id, branch)
@@ -294,6 +300,7 @@ def run_branch(
     result["experiment_id"] = args.experiment_id
     result["run_id"] = unique_run_id
     result["permanent_run_path"] = str(branch_dir)
+    result["storage_branch_name"] = output_branch_name
     result["temporary_run_path"] = str(temporary_run_path)
     try:
         checkpoint = load_checkpoint(source_task_dir, checkpoint_id)
@@ -646,6 +653,13 @@ def permanent_run_dir(branch_root: Path, task_id: str, checkpoint_id: str, branc
     return branch_root / task_id / checkpoint_id / branch
 
 
+def validate_output_branch_name(value: str) -> str:
+    """Validate a single safe directory label for a non-destructive rerun."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", value):
+        raise ValueError("output branch name must contain only letters, digits, '.', '_' or '-'.")
+    return value
+
+
 def resolve_branch_root(args: argparse.Namespace, appworld_root: Path) -> Path:
     """Return the long-term branch result root."""
     if args.output_root:
@@ -829,11 +843,16 @@ def write_manifest(
 
 def result_template(task_id: str, checkpoint_id: str, branch: str, annotation: dict[str, Any]) -> dict[str, Any]:
     """Return the requested result schema with defaults."""
+    controller_action = None
+    if branch == "oracle_instruction":
+        controller_action = "ORACLE_INSTRUCTION"
+    elif branch != "generic_reflection":
+        controller_action = annotation.get("targeted_action")
     return {
         "task_id": task_id,
         "checkpoint_id": checkpoint_id,
         "branch": branch,
-        "controller_action": None if branch == "generic_reflection" else annotation.get("targeted_action"),
+        "controller_action": controller_action,
         "restore_success": True,
         "termination_status": "error",
         "evaluator_result": None,
