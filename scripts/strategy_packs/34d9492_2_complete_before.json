@@ -1,0 +1,25 @@
+{
+  "task_id": "34d9492_2",
+  "checkpoint_id": "34d9492_2_post_0009",
+  "case_type": "first_complete_task_before",
+  "note": "Premature/failed complete before vacation photo organization.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not call complete_task yet (including failure completes). Login to file_system, list vacation photos, organize by created_at into the required folders with real moves, then complete."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before complete_task, verify every vacation photo is mapped by created_at into the correct destination folder and that moves are done. If any file remains unorganized, finish first."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Do not complete. Re-plan: supervisor passwords -> file_system.login -> show_directory on vacation photos -> assign folders by created_at -> create dirs/move_file -> then complete_task()."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Do not complete with failure. Call show_api_doc for file_system.login, show_directory, move_file. Login with supervisor password, then organize vacation photos by created_at into the required folders before completing."
+    }
+  ]
+}

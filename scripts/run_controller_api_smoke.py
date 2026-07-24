@@ -198,7 +198,6 @@ def build_agent_config(args: argparse.Namespace, appworld_root: Path) -> dict[st
             "temperature": 0.0,
             "seed": 100,
             "max_completion_tokens": 65536,
-            "extra_body": {"enable_thinking": False},
             "drop_reasoning_content": False,
             "cost_per_token": {
                 "input_cache_hit": 1.44e-07,

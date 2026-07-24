@@ -67,6 +67,8 @@ def main() -> int:
         "max_cost_cny": args.max_cost_cny,
         "temperature": 0.0,
         "output_dir": str(output_dir),
+        "strategy_name": args.strategy_name,
+        "guidance": args.guidance,
     }
     write_json(output_dir / "config.json", config)
     print_run_config(config)
@@ -121,6 +123,19 @@ def main() -> int:
                     ExecutionIO(content=str(output), metadata={})
                     for output in checkpoint.get("last_execution_outputs", [])
                 ]
+                # Optional manual Controller injection for offline branch experiments.
+                if args.guidance:
+                    guidance_msg = (
+                        "[CONTROLLER]\n"
+                        f"Action: {args.strategy_name or 'MANUAL'}\n"
+                        f"Advice: {args.guidance}\n"
+                        "Follow this advice in your next steps. "
+                        "Revise the plan before repeating a blocked or premature action."
+                    )
+                    messages = list(getattr(agent, "messages", []) or [])
+                    messages.append({"role": "user", "content": guidance_msg})
+                    agent.messages = messages
+                    execution_outputs = [ExecutionIO(content=guidance_msg, metadata={})]
                 for _ in range(args.max_agent_turns_after_restore):
                     turn_start = time.perf_counter()
                     agent.step_number += 1
@@ -206,6 +221,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-cost-cny", type=float, default=1.0)
     parser.add_argument("--appworld-root", default=str(REPO_ROOT.parent / "appworld"))
     parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--strategy-name", default=None, help="Label for injected Controller action")
+    parser.add_argument("--guidance", default=None, help="Advice text injected before continue")
     return parser.parse_args()
 
 

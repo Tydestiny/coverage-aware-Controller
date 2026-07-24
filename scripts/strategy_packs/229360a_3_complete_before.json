@@ -1,0 +1,25 @@
+{
+  "task_id": "229360a_3",
+  "checkpoint_id": "229360a_3_post_0014",
+  "case_type": "first_complete_task_before",
+  "note": "Premature complete after incomplete library membership checks.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not call complete_task yet. Recompute library vs liked vs downloaded membership and remove remaining ineligible songs first."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before complete_task, recompute membership for every library song against liked and downloaded sets. If any song is in neither, remove it. Do not claim nothing to remove without printing both checks."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Do not complete. Re-plan: list library, liked, downloaded -> compute remove_set = library - liked - downloaded -> remove remove_set -> re-list -> complete_task(answer=None)."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Do not complete yet. Call show_api_doc for Spotify library/liked/downloaded/remove APIs, then finish membership cleanup before complete_task()."
+    }
+  ]
+}

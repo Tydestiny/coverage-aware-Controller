@@ -1,0 +1,25 @@
+{
+  "task_id": "ce359b5_3",
+  "checkpoint_id": "ce359b5_3_post_0008",
+  "case_type": "first_high_risk_write_before",
+  "note": "Spotify year-based song removal write-before.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not remove songs yet. First fetch release_year for every library song via the song-detail API, print song_id+year, then remove only songs before the required year."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Do not remove songs yet. Build songs_to_remove only after show_song (or equivalent detail API) confirms release_year. Print the candidate list with years, then remove only verified matches."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Abandon current removal. Re-plan: list library -> fetch release_year for each song -> filter by year threshold -> remove only matches -> re-list library to verify."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Before deleting, call show_api_doc for Spotify song-detail and remove-from-library APIs. Confirm year fields and parameters, then continue carefully."
+    }
+  ]
+}

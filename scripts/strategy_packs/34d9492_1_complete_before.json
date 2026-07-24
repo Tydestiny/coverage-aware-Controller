@@ -1,0 +1,25 @@
+{
+  "task_id": "34d9492_1",
+  "checkpoint_id": "34d9492_1_post_0007",
+  "case_type": "first_complete_task_before",
+  "note": "Premature complete before vacation photo organization.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not call complete_task yet. Remaining work is required: login file_system, list vacation photos, organize by created_at into Petra/Budapest/Amsterdam, then complete only after real moves."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before complete_task, verify every vacation photo has a destination folder from created_at and that required folders exist with the moved files. If any file is unassigned, finish moves first."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Do not call complete_task yet. 1) apis.supervisor.show_account_passwords then apis.file_system.login. 2) show_directory on ~/photographs/vacations/ with access_token. 3) For each file, use created_at (not filename) to assign Petra/Budapest/Amsterdam. 4) create directories and move_file for real. Only then complete_task()."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Do not complete yet. Call show_api_doc for file_system.login, show_directory, create_directory, move_file. Then finish the organization workflow before complete_task()."
+    }
+  ]
+}

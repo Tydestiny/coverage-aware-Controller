@@ -1,0 +1,25 @@
+{
+  "task_id": "e3d6c94_1",
+  "checkpoint_id": "e3d6c94_1_post_0001",
+  "case_type": "first_high_risk_write_before",
+  "note": "Playlist create/add write-before (very early checkpoint).",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not create_playlist or add_song yet. First gather the full required track set with show_song_library / recommendations as specified by the task, print song_ids, then create the playlist and add only those ids."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before creating a playlist or adding songs, print the exact song_id set required by the task. Create/add only after the set is complete and matches the constraints."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Abandon early playlist writes. Re-plan: login Spotify if needed -> collect required tracks -> print ids -> create_playlist -> add only those songs -> verify playlist contents."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Before create_playlist/add_song, call show_api_doc for the Spotify playlist and library APIs you will use. Confirm parameters, then proceed."
+    }
+  ]
+}

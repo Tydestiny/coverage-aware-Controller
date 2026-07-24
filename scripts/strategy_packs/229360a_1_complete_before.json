@@ -1,0 +1,25 @@
+{
+  "task_id": "229360a_1",
+  "checkpoint_id": "229360a_1_post_0011",
+  "case_type": "first_complete_task_before",
+  "note": "Premature complete with partial excuse before song/album cleanup.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not call complete_task with a partial excuse. Finish library cleanup: remove songs/albums that are not liked and not downloaded, then complete_task(answer=None)."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before complete_task, enumerate library songs and albums; compute the not-liked AND not-downloaded sets; print counts; remove only those sets; then complete."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Do not complete with a partial excuse. Show album APIs via show_api_doc, enumerate library songs and albums, compute not-liked AND not-downloaded sets, remove those items, then complete_task() with answer=None."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Do not complete yet. Call show_api_doc for Spotify library/album/liked/downloaded/remove APIs, then finish the cleanup before complete_task(answer=None)."
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "task_id": "7d7fbf6_2",
+  "checkpoint_id": "7d7fbf6_2_post_0012",
+  "case_type": "first_complete_task_before",
+  "note": "Premature complete after auth failure on file_system.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not complete due to auth failure. Get password from supervisor.show_account_passwords, login to file_system, keep access_token, finish the required vacation file operations, then complete."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before complete_task, confirm you have a valid file_system access_token and that the required vacation file operations are finished. If auth or moves are incomplete, finish them first."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Do not complete. Re-plan: show_account_passwords -> file_system.login -> show_directory -> perform required file operations with access_token -> verify listing -> complete_task()."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Do not complete due to auth failure. show_api_doc(file_system.login), get password from supervisor.show_account_passwords, login, keep access_token, then finish vacation file operations before completing."
+    }
+  ]
+}

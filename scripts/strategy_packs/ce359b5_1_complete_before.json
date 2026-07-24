@@ -1,0 +1,25 @@
+{
+  "task_id": "ce359b5_1",
+  "checkpoint_id": "ce359b5_1_post_0009",
+  "case_type": "first_complete_task_before",
+  "note": "Premature complete before year-based library cleanup.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not call complete_task yet. You still must fetch release_year for library songs and remove those before the required year, then re-list before completing."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before complete_task, print every library song with release_year and mark which ones must be removed. Remove only verified matches, re-list library, then complete."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Do not complete. Use show_api_doc for Spotify song-detail APIs, fetch release_year for every library song, then remove_song_from_library only for songs before the required year. Re-list the library to verify before complete_task()."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Do not complete. Call show_api_doc for Spotify song-detail and remove-from-library APIs, then finish year-based cleanup before complete_task()."
+    }
+  ]
+}

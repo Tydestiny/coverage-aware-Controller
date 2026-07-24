@@ -1,0 +1,25 @@
+{
+  "task_id": "7d7fbf6_1",
+  "checkpoint_id": "7d7fbf6_1_post_0008",
+  "case_type": "first_high_risk_write_before",
+  "note": "File-system compression/move write-before.",
+  "strategies": [
+    {"name": "CONTINUE", "guidance": null},
+    {
+      "name": "BLOCK_RISKY_ACTION",
+      "guidance": "Do not compress/move/delete yet. First login to file_system, show_directory to get absolute paths, print the exact target paths, then perform writes only on those paths."
+    },
+    {
+      "name": "VERIFY_TARGET_SET",
+      "guidance": "Before any write, print the verified set of absolute file/directory paths that the task requires changing. Operate only on that verified set; do not invent relative paths."
+    },
+    {
+      "name": "REPLAN",
+      "guidance": "Abandon the current write plan. Re-plan: supervisor passwords -> file_system.login -> show_directory -> identify targets -> compress/move as required -> verify listing."
+    },
+    {
+      "name": "LOOKUP_API_SPEC",
+      "guidance": "Before any write, call show_api_doc for file_system.login, show_directory, and compression/move APIs. Login, then operate only on absolute paths returned by show_directory."
+    }
+  ]
+}
