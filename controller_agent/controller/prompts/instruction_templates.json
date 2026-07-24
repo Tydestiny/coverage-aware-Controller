@@ -1,0 +1,31 @@
+{
+  "VERIFY_TARGET_SET": {
+    "write_before": "Do not perform irreversible writes yet. Print the exact target set required by the task (IDs/paths/recipients and the rule used). Only after the printed set is complete and unique, apply writes to that set only.",
+    "complete_before": "Do not call complete_task yet. Recompute and print membership/coverage for every required item against task constraints. Finish any missing removals/moves/writes, then complete only if the printed check passes.",
+    "attribute_filter_complete": "Do not complete yet. For every library item, fetch the required attribute (e.g. release_year via show_song / detail API), print item_id + attribute, build the remove/keep set from that printed table, apply only that set, re-list to verify, then complete_task(answer=None).",
+    "membership_cleanup_write": "Before any deletion, verify remove_set = library - liked - downloaded (or the exact membership rule in the task). Print library/liked/downloaded counts and remove_set IDs. Only delete that remove_set; keep liked/downloaded items untouched.",
+    "generic": "Pause and print a verified target checklist against the task constraints. Continue only after the checklist is explicit and complete."
+  },
+  "BLOCK_RISKY_ACTION": {
+    "write_before": "BLOCK the current write. First gather evidence, compute the exact target set, print counts/IDs, then rewrite so only that set is modified. Do not submit a natural-language answer instead of doing the work.",
+    "complete_before": "Do not call complete_task yet. Remaining required work is unfinished or the answer is an excuse. Finish the real state changes (or produce the required structured answer), then complete_task() with the correct answer format (often answer=None for state tasks).",
+    "membership_cleanup_write": "Do not remove songs/albums yet. First list library, liked, and downloaded. Compute remove_set = library - liked - downloaded. Print counts and IDs, then remove only remove_set. Do not submit a natural-language answer.",
+    "generic": "The proposed step is unsafe or premature. Forbid it, repair the missing precondition, then continue."
+  },
+  "REPLAN": {
+    "write_before": "Abandon the current write plan. Re-plan in order: auth if needed -> enumerate evidence -> compute target set -> write only the set -> verify by re-listing.",
+    "complete_before": "Do not complete. Finish in this order: (1) list required populations, (2) compute the exact target set with a printed check, (3) perform missing writes, (4) re-list to verify, (5) complete_task with the correct answer format (often answer=None). Do not give a natural-language excuse.",
+    "error_after": "Keep the original task goal. Re-plan recovery from the latest error: inspect the failure, fix params/auth/data, retry the minimal next step. Do not substitute a weaker proxy goal.",
+    "generic": "Re-plan the next steps while keeping the original task goal. Do not silently rewrite the objective."
+  },
+  "LOOKUP_API_SPEC": {
+    "write_before": "Before writing, call show_api_doc for the exact APIs/fields you will use (especially unknown fields like release_year or auth params). Confirm names/types, then continue carefully.",
+    "complete_before": "Do not complete due to API/auth confusion. Call show_api_doc for the failing API, fix parameters/access_token, finish required operations, then complete.",
+    "attribute_filter_complete": "Do not complete. Call show_api_doc for the song/album detail API that provides the required attribute (e.g. release year). Then fetch that attribute for every library item, filter by the task threshold, remove only matches, verify, and complete.",
+    "error_after": "Call show_api_doc for the failing API. Fix parameter names, types, and access_token requirements, then retry. Do not change the task goal.",
+    "generic": "Look up the official API docs for the failing or uncertain call, then proceed with corrected parameters."
+  },
+  "PROCEED": {
+    "generic": ""
+  }
+}
