@@ -30,12 +30,25 @@ def test_block_excuse_complete() -> None:
 def test_write_without_set_gets_block() -> None:
     d = PolicyG0Backend().decide(
         _inp(
+            task="Move files into archive folder.",
+            trigger_reason="before_first_write",
+            current_agent_output="apis.file_system.move_file(source_path='a', destination_path='b')",
+            recent_history=[{"role": "assistant", "content": "I will move files now"}],
+        )
+    )
+    assert d.action == Action.BLOCK_RISKY_ACTION
+
+
+def test_membership_write_uses_verify() -> None:
+    d = PolicyG0Backend().decide(
+        _inp(
             trigger_reason="before_first_write",
             current_agent_output="apis.spotify.remove_song_from_library(song_id=1, access_token=t)",
             recent_history=[{"role": "assistant", "content": "I will remove songs now"}],
         )
     )
-    assert d.action == Action.BLOCK_RISKY_ACTION
+    assert d.action == Action.VERIFY_TARGET_SET
+    assert "remove_set" in d.instruction.lower() or "liked" in d.instruction.lower()
 
 
 def test_controller_adapter_accepts_policy_g0() -> None:
