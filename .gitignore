@@ -25,6 +25,9 @@ models/
 
 # Runtime trajectories, checkpoints, branch outputs, and reports
 results/
+# Keep source modules named "results"; only runtime result directories are ignored.
+!controller_agent/results/
+!controller_agent/results/*.py
 outputs/
 checkpoints/
 branch_runs/
@@ -32,6 +35,7 @@ trajectories/
 cache/
 logs/
 *.log
+RESULTS_STRUCTURE*.md
 
 # Temporary/debug archive and generated packaging metadata
 scripts/archive/

@@ -64,11 +64,22 @@ def main() -> int:
     from appworld_agents.code.simplified.agent import Agent
 
     agent_args = argparse.Namespace(
-        max_cost_cny=args.max_cost_cny,
+        max_cost_cny=float("inf") if args.unbounded else args.max_cost_cny,
         max_agent_turns=args.max_agent_turns,
         max_extra_agent_turns_after_block=0,
     )
-    base_agent = Agent.from_dict(build_agent_config(agent_args, appworld_root))
+    agent_config = build_agent_config(agent_args, appworld_root)
+    if args.unbounded:
+        agent_config["max_steps"] = None
+        agent_config["usage_tracker_config"] = {
+            "max_cost_overall": float("inf"),
+            "max_cost_per_task": float("inf"),
+            "max_input_tokens_overall": float("inf"),
+            "max_input_tokens_per_task": float("inf"),
+            "max_output_tokens_overall": float("inf"),
+            "max_output_tokens_per_task": float("inf"),
+        }
+    base_agent = Agent.from_dict(agent_config)
     controlled = ControlledReActAgent(
         base_agent,
         config=ControllerConfig(enabled=False),
@@ -85,12 +96,12 @@ def main() -> int:
     runner = ControlledAppWorldRunner(
         controlled,
         budget=RunnerBudget(
-            max_agent_turns=args.max_agent_turns,
-            max_environment_executions=args.max_environment_executions,
+            max_agent_turns=None if args.unbounded else args.max_agent_turns,
+            max_environment_executions=None if args.unbounded else args.max_environment_executions,
             max_controller_calls=0,
             max_controller_blocks=0,
-            max_extra_agent_turns_after_block=0,
-            max_cost_cny=args.max_cost_cny,
+            max_extra_agent_turns_after_block=None if args.unbounded else 0,
+            max_cost_cny=None if args.unbounded else args.max_cost_cny,
         ),
         checkpoint_capture_hook=checkpoint_hook,
     )
@@ -132,6 +143,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-agent-turns", type=int, default=20)
     parser.add_argument("--max-environment-executions", type=int, default=15)
     parser.add_argument("--max-cost-cny", type=float, default=1.0)
+    parser.add_argument("--unbounded", action="store_true", help="Stop only on task completion, model/environment error, or manual interruption.")
     parser.add_argument("--seed", type=int, default=100)
     parser.add_argument("--experiment-name", default="controlled_react_checkpoint_collection")
     parser.add_argument("--checkpoint-root", default=str(REPO_ROOT / "results" / "checkpoints"))
@@ -166,9 +178,10 @@ def build_config(args: argparse.Namespace, appworld_root: Path, task_output_dir:
         "agent_name": AGENT_NAME,
         "controller_enabled": False,
         "context_policy": "full_context_no_compaction",
-        "max_agent_turns": args.max_agent_turns,
-        "max_environment_executions": args.max_environment_executions,
-        "max_cost_cny": args.max_cost_cny,
+        "max_agent_turns": None if args.unbounded else args.max_agent_turns,
+        "max_environment_executions": None if args.unbounded else args.max_environment_executions,
+        "max_cost_cny": None if args.unbounded else args.max_cost_cny,
+        "unbounded": args.unbounded,
         "seed": args.seed,
         "api_endpoint": API_ENDPOINT,
         "experiment_name": args.experiment_name,

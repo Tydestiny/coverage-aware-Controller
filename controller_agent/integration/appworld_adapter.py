@@ -37,12 +37,12 @@ class AppWorldInterceptionApplied:
 class RunnerBudget:
     """Independent runtime budgets for controlled AppWorld execution."""
 
-    max_agent_turns: int = 20
-    max_environment_executions: int = 15
-    max_controller_calls: int = 2
-    max_controller_blocks: int = 1
-    max_extra_agent_turns_after_block: int = 3
-    max_cost_cny: float = 1.0
+    max_agent_turns: int | None = 20
+    max_environment_executions: int | None = 15
+    max_controller_calls: int | None = 2
+    max_controller_blocks: int | None = 1
+    max_extra_agent_turns_after_block: int | None = 3
+    max_cost_cny: float | None = 1.0
 
 
 class AppWorldInterceptionAdapter:
@@ -281,6 +281,8 @@ class ControlledAppWorldRunner:
 
     def _cost_limit_reached(self, task_id: str) -> bool:
         """Return whether configured cost limit is reached."""
+        if self.budget.max_cost_cny is None:
+            return False
         if self._usage_exceeded(task_id):
             return True
         cost = self._total_cost()
@@ -288,6 +290,8 @@ class ControlledAppWorldRunner:
 
     def _environment_execution_limit_reached(self) -> bool:
         """Return whether environment execution budget is exhausted."""
+        if self.budget.max_environment_executions is None:
+            return False
         return self._runtime_state().environment_execution_count >= self.budget.max_environment_executions
 
     def _increment_step_number(self) -> None:
@@ -297,7 +301,7 @@ class ControlledAppWorldRunner:
 
     def _extra_turn_limit_reached(self) -> bool:
         """Return whether post-block extra generation budget is exhausted."""
-        if self.first_block_turn is None:
+        if self.first_block_turn is None or self.budget.max_extra_agent_turns_after_block is None:
             return False
         return (
             self._runtime_state().agent_turn_count - self.first_block_turn
@@ -307,10 +311,14 @@ class ControlledAppWorldRunner:
     def _should_continue(self) -> bool:
         """Return whether the runner can take another generation turn."""
         turn_count = self._runtime_state().agent_turn_count
+        if self.budget.max_agent_turns is None:
+            return True
         if turn_count < self.budget.max_agent_turns:
             return True
         if self.first_block_turn is None:
             return False
+        if self.budget.max_extra_agent_turns_after_block is None:
+            return True
         return turn_count - self.first_block_turn < self.budget.max_extra_agent_turns_after_block
 
     def _runtime_state(self) -> Any:
