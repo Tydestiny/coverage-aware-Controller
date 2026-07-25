@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -14,9 +15,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from controller_agent.branching.namespace_restore import restore_python_namespace_from_prefix
+from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
+from controller_agent.branching.namespace_restore import reset_world_interaction_logs, restore_python_namespace_from_prefix
 from controller_agent.controller.controller import Controller
 from controller_agent.controller.live_llm_backend import LiveLLMBackend
+from controller_agent.controller.policy_g0 import load_g0_system_prompt
 from controller_agent.integration.appworld_adapter import AppWorldInterceptionApplied, ControlledAppWorldRunner, RunnerBudget
 from controller_agent.integration.controlled_react_agent import ControlledReActAgent
 from controller_agent.logging.logger import ExperimentLogger
@@ -36,6 +39,9 @@ from scripts.run_controller_api_smoke import (
     write_json,
     write_jsonl,
 )
+
+
+DEFAULT_CONTROLLER_MODEL = "qwen3.7-max-2026-05-20"
 
 
 def parse_args() -> argparse.Namespace:
@@ -58,11 +64,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--appworld-root", default=str(REPO_ROOT.parent / "appworld"))
     parser.add_argument("--output-dir", default=str(REPO_ROOT / "results" / "controller_live_checkpoint_smoke"))
-    parser.add_argument("--max-agent-turns", type=int, default=3)
-    parser.add_argument("--max-environment-executions", type=int, default=3)
-    parser.add_argument("--max-controller-calls", type=int, default=1)
-    parser.add_argument("--max-controller-blocks", type=int, default=1)
-    parser.add_argument("--max-cost-cny", type=float, default=1.0)
+    parser.add_argument("--max-agent-turns", type=int, default=10_000)
+    parser.add_argument("--max-environment-executions", type=int, default=10_000)
+    parser.add_argument("--max-controller-calls", type=int, default=10_000)
+    parser.add_argument("--max-controller-blocks", type=int, default=10_000)
+    parser.add_argument("--max-cost-cny", type=float, default=float("inf"))
+    parser.add_argument("--branch", choices=("baseline", "controller"), default="controller")
+    parser.add_argument("--disable-controller", action="store_true")
+    parser.add_argument("--skip-inprocess-evaluate", action="store_true")
+    parser.add_argument(
+        "--retain-smoke-artifacts",
+        action="store_true",
+        help="Write controller_response.json and smoke_test_report.md for a standalone smoke test.",
+    )
+    parser.add_argument(
+        "--log-lm-calls",
+        action="store_true",
+        help="Preserve AppWorld lm_calls.jsonl for an archived branch result.",
+    )
     parser.add_argument("--candidate-audit", default=None)
     parser.add_argument("--experiment-name", default="controller_live_checkpoint_smoke")
     return parser.parse_args()
@@ -79,8 +98,10 @@ def main() -> int:
         "task_id": args.task_id,
         "checkpoint_id": args.checkpoint_id,
         "agent_model": "qwen3-coder-flash-2025-07-28",
-        "controller_model": "qwen3-coder-flash-2025-07-28",
+        "controller_model": DEFAULT_CONTROLLER_MODEL,
         "controller_backend": "LiveLLMBackend",
+        "branch": args.branch,
+        "controller_enabled": not args.disable_controller,
         "max_agent_turns": args.max_agent_turns,
         "max_environment_executions": args.max_environment_executions,
         "max_controller_calls": args.max_controller_calls,
@@ -109,23 +130,36 @@ def main() -> int:
     agent_args = argparse.Namespace(
         max_cost_cny=args.max_cost_cny,
         max_agent_turns=args.max_agent_turns,
-        max_extra_agent_turns_after_block=3,
+        max_extra_agent_turns_after_block=10_000,
     )
     agent_config = build_agent_config(agent_args, appworld_root)
-    agent_config["log_lm_calls"] = False
+    agent_config["max_steps"] = None
+    agent_config["log_lm_calls"] = args.log_lm_calls
     base_agent = Agent.from_dict(agent_config)
     logger = ExperimentLogger()
-    controller = Controller(backend=LiveLLMBackend())
+    controller = Controller(backend=LiveLLMBackend(model_name=DEFAULT_CONTROLLER_MODEL))
     controlled = ControlledReActAgent(
         base_agent,
         controller=controller,
         config=ControllerConfig(
-            enabled=True,
+            enabled=not args.disable_controller,
             max_controller_calls_per_task=args.max_controller_calls,
             max_controller_blocks=args.max_controller_blocks,
             max_consecutive_blocks=args.max_controller_blocks,
         ),
         logger=logger,
+    )
+    branch_logger = BranchRuntimeLogger(
+        output_dir,
+        branch=args.branch,
+        checkpoint_last_step=int(checkpoint["agent_turn_index"]),
+    )
+    branch_logger.write_checkpoint_manifest(
+        output_dir / "checkpoint_manifest.json",
+        checkpoint_id=args.checkpoint_id,
+        state_path=str(source_task_dir / "checkpoints" / str(checkpoint["appworld_state_id"])),
+        source_trajectory=str(source_task_dir),
+        source_logs=str(source_task_dir / "logs"),
     )
     runner = ControlledAppWorldRunner(
         controlled,
@@ -137,12 +171,15 @@ def main() -> int:
             max_extra_agent_turns_after_block=3,
             max_cost_cny=args.max_cost_cny,
         ),
+        branch_runtime_logger=branch_logger,
+        controller_prompt_hash=hashlib.sha256(load_g0_system_prompt().encode("utf-8")).hexdigest(),
     )
 
     restore_result: dict[str, Any]
     evaluator_result: dict[str, Any] = {}
     started = time.perf_counter()
     previous_cwd = Path.cwd()
+    raw_logs_source: Path | None = None
     os.chdir(appworld_root)
     try:
         with AppWorld.initializer(
@@ -162,8 +199,10 @@ def main() -> int:
                 if not namespace_result.success:
                     raise RuntimeError(namespace_result.error or "namespace restore failed")
                 world.load_state(str(checkpoint["appworld_state_id"]))
+                reset_world_interaction_logs(world)
                 base_agent.messages = checkpoint["agent_messages"]
                 base_agent.step_number = int(checkpoint["agent_turn_index"])
+                raw_logs_source = output_task_dir / "logs"
                 if args.candidate_audit:
                     _run_cached_pre_action(
                         Path(args.candidate_audit).resolve(),
@@ -174,12 +213,20 @@ def main() -> int:
                     )
                 else:
                     runner.run_restored_world(world)
-                evaluator_result = evaluate_world(world)
+                evaluator_result = (
+                    {"available": False, "reason": "in_process_evaluator_skipped"}
+                    if args.skip_inprocess_evaluate
+                    else evaluate_world(world)
+                )
+                _flush_agent_runtime_logs(base_agent)
     except Exception as exc:
         restore_result = locals().get("restore_result", {"success": False, "error": f"{type(exc).__name__}: {exc}"})
         evaluator_result = {"available": False, "error_type": type(exc).__name__, "error": str(exc)}
     finally:
         os.chdir(previous_cwd)
+
+    if raw_logs_source is not None:
+        branch_logger.archive_raw_logs(raw_logs_source)
 
     events = sanitize_messages(runner.turn_events)
     controller_events = sanitize_messages(logger.events)
@@ -201,10 +248,21 @@ def main() -> int:
     write_jsonl(output_dir / "turn_events.jsonl", events)
     write_jsonl(output_dir / "controller_events.jsonl", controller_events)
     write_jsonl(output_dir / "sanitized_messages.jsonl", messages)
-    write_json(output_dir / "controller_response.json", response_data)
+    if args.retain_smoke_artifacts:
+        write_json(output_dir / "controller_response.json", response_data)
     write_json(output_dir / "evaluator_result.json", evaluator_result)
     write_json(output_dir / "restore_result.json", restore_result)
-    _write_report(output_dir, config, restore_result, events, controller_events, response_data, evaluator_result, time.perf_counter() - started)
+    if args.retain_smoke_artifacts:
+        _write_report(
+            output_dir,
+            config,
+            restore_result,
+            events,
+            controller_events,
+            response_data,
+            evaluator_result,
+            time.perf_counter() - started,
+        )
     return 0 if restore_result.get("success") else 1
 
 
@@ -240,6 +298,20 @@ def _write_report(
 def runner_termination(events: list[dict[str, Any]]) -> str | None:
     """Return the final recorded termination reason."""
     return events[-1].get("termination_reason") if events else None
+
+
+def _flush_agent_runtime_logs(agent: Any) -> None:
+    """Flush AppWorld Agent log streams before copying branch raw logs."""
+    logger = getattr(agent, "logger", None)
+    if logger is None:
+        return
+    jsonl_stream = getattr(logger, "file_jsonl", None)
+    if jsonl_stream is not None and not jsonl_stream.closed:
+        jsonl_stream.flush()
+    console = getattr(logger, "file_console", None)
+    console_stream = getattr(console, "file", None)
+    if console_stream is not None and not console_stream.closed:
+        console_stream.flush()
 
 
 def _run_cached_pre_action(

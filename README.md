@@ -72,7 +72,8 @@ No real AppWorld task or model API call is launched by the unit tests.
 Each member can run one task-id part file. The model and Agent configuration are
 fixed in `scripts/run_controller_api_smoke.py`:
 
-- model: `qwen3-coder-flash-2025-07-28`
+- Agent model: `qwen3-coder-flash-2025-07-28`
+- Controller model: `qwen3.7-max-2026-05-20`
 - endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1`
 - agent: `simplified_react_code_agent`
 - temperature: `0.0`

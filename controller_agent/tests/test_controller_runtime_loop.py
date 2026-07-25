@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+from pathlib import Path
 
+from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
 from controller_agent.controller.controller import Controller
 from controller_agent.integration.appworld_adapter import AppWorldInterceptionAdapter, ControlledAppWorldRunner, RunnerBudget
 from controller_agent.integration.controlled_react_agent import ControlledReActAgent
@@ -112,3 +115,39 @@ def test_controller_call_and_block_budgets_fail_open() -> None:
     assert world.executed_codes == ["apis.supervisor.complete_task()"]
     assert runner.turn_events[1]["execution_allowed"] is True
     assert controlled.runtime_state.total_blocks == 1
+
+
+def test_runner_writes_direct_branch_records_with_raw_step_numbers(tmp_path: Path) -> None:
+    """Blocked and regenerated actions are recorded independently after a checkpoint."""
+    backend = RecordingBackend(Action.REPLAN)
+    agent = ScriptedAgent()
+    agent.outputs = ["apis.supervisor.complete_task()", "print('verify')", "apis.supervisor.complete_task()"]
+    controlled = ControlledReActAgent(
+        agent,
+        controller=Controller(backend=backend),
+        config=ControllerConfig(enabled=True, max_controller_calls_per_task=1, max_controller_blocks=1),
+        integration_adapter=AppWorldInterceptionAdapter(),
+    )
+    logger = BranchRuntimeLogger(tmp_path / "controller", branch="controller", checkpoint_last_step=8)
+    runner = ControlledAppWorldRunner(
+        controlled,
+        budget=RunnerBudget(max_agent_turns=4, max_environment_executions=4, max_controller_calls=1, max_controller_blocks=1),
+        branch_runtime_logger=logger,
+        controller_prompt_hash="g0-test",
+    )
+    world = ScriptedWorld()
+    agent.initialize(world)
+    agent.step_number = 8
+    runner.run_restored_world(world)
+
+    continuation = [json.loads(line) for line in logger.continuation_path.read_text(encoding="utf-8").splitlines()]
+    calls = [json.loads(line) for line in logger.controller_calls_path.read_text(encoding="utf-8").splitlines()]
+    assert [row["step_number"] for row in continuation] == [9, 10, 11]
+    assert continuation[0]["execution_allowed"] is False
+    assert continuation[0]["environment_observation"] is None
+    assert continuation[1]["agent_call_id"] != continuation[0]["agent_call_id"]
+    assert continuation[-1]["environment_observation"]
+    assert continuation[-1]["task_completed"] is True
+    assert continuation[-1]["termination_reason"] == "task_completed"
+    assert calls[0]["step_number"] == continuation[0]["step_number"]
+    assert calls[0]["controller_input"]["current_agent_output"] == "apis.supervisor.complete_task()"

@@ -122,7 +122,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--appworld-root", default=str(REPO_ROOT.parent / "appworld"))
     parser.add_argument("--max-total-agent-turns", type=int, default=20)
     parser.add_argument("--max-total-environment-executions", type=int, default=15)
-    parser.add_argument("--max-cost-cny", type=float, default=1.0)
+    parser.add_argument("--max-cost-cny", type=float, default=float("inf"))
     parser.add_argument(
         "--no-limits",
         action="store_true",

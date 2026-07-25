@@ -19,7 +19,7 @@ from controller_agent.controller.policy_g0 import load_g0_system_prompt, render_
 from controller_agent.state.schemas import ControllerInput, ControllerResponse, response_from_mapping
 
 
-DEFAULT_MODEL = "qwen3-coder-flash-2025-07-28"
+DEFAULT_MODEL = "qwen3.7-max-2026-05-20"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", re.I)
 
@@ -39,7 +39,7 @@ def call_model(
     Returns a dict with at least ``text`` and optional usage/latency fields.
     Does not send ``enable_thinking`` (incompatible with local AppWorld stacks).
     """
-    model_name = model or os.environ.get("CONTROLLER_MODEL_NAME") or DEFAULT_MODEL
+    model_name = model or DEFAULT_MODEL
     endpoint = (base_url or os.environ.get("MODEL_SERVER_URL") or DEFAULT_BASE_URL).rstrip("/")
     key = (
         api_key

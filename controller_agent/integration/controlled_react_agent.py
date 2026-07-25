@@ -19,6 +19,7 @@ from controller_agent.state.builder import StateBuilder
 from controller_agent.state.schemas import (
     Action,
     ControllerConfig,
+    ControllerInput,
     ControllerResponse,
     ControllerRuntimeState,
     InterceptionResult,
@@ -63,10 +64,12 @@ class ControlledReActAgent:
         self.integration_adapter = integration_adapter or OfflineMockAdapter()
         self._current_task_id: str | None = None
         self.last_interception_result: InterceptionResult | None = None
+        self.last_controller_input: ControllerInput | None = None
 
     def next_execution_inputs_usage_and_status(self, last_execution_outputs: Sequence[Any]) -> Any:
         """Delegate one Agent turn and inspect only proposed execution."""
         self.last_interception_result = None
+        self.last_controller_input = None
         result = self.agent.next_execution_inputs_usage_and_status(last_execution_outputs)
         if not self.config.enabled:
             return result
@@ -107,6 +110,7 @@ class ControlledReActAgent:
                 self._history_before_current_output(),
                 self._latest_assistant_output(context.proposed_execution),
             )
+            self.last_controller_input = controller_input
             response = self.controller.decide(controller_input)
         except Exception as exc:
             self._log_fail_open(context, "controller_or_state_builder_failure", exc, trigger)

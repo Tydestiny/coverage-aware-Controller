@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from controller_agent.controller.controller import Controller
+from controller_agent.controller.live_llm_backend import DEFAULT_MODEL as DEFAULT_CONTROLLER_MODEL
 from controller_agent.controller.live_llm_backend import LiveLLMBackend
 from controller_agent.integration.appworld_adapter import ControlledAppWorldRunner, RunnerBudget
 from controller_agent.integration.controlled_react_agent import ControlledReActAgent
@@ -43,8 +44,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--appworld-root", default=str(REPO_ROOT.parent / "appworld"))
     parser.add_argument("--max-agent-turns", type=int, default=10000)
     parser.add_argument("--max-environment-executions", type=int, default=10000)
-    parser.add_argument("--max-controller-calls", type=int, default=2)
-    parser.add_argument("--max-controller-blocks", type=int, default=2)
+    parser.add_argument("--max-controller-calls", type=int, default=10_000)
+    parser.add_argument("--max-controller-blocks", type=int, default=10_000)
     parser.add_argument("--max-cost-cny", type=float, default=float("inf"))
     return parser.parse_args()
 
@@ -74,7 +75,7 @@ def main() -> int:
         "experiment_name": args.experiment_name,
         "agent_name": AGENT_NAME,
         "agent_model": MODEL_NAME,
-        "controller_model": MODEL_NAME,
+        "controller_model": DEFAULT_CONTROLLER_MODEL,
         "controller_backend": "LiveLLMBackend",
         "context_policy": "FULL_CONTEXT",
         "enabled_triggers": ["before_finish"],
@@ -94,8 +95,8 @@ def main() -> int:
         max_extra_agent_turns_after_block=10000,
     )
     agent_config = build_agent_config(agent_args, appworld_root)
-    agent_config["max_steps"] = 10000
-    agent_config["usage_tracker_config"]["max_output_tokens_per_task"] = 10_000_000
+    agent_config["max_steps"] = None
+    agent_config["usage_tracker_config"]["max_output_tokens_per_task"] = float("inf")
     base_agent = None
     runner = None
     logger = ExperimentLogger()
@@ -113,7 +114,7 @@ def main() -> int:
         base_agent = Agent.from_dict(agent_config)
         controlled = ControlledReActAgent(
             base_agent,
-            controller=Controller(backend=LiveLLMBackend()),
+            controller=Controller(backend=LiveLLMBackend(model_name=DEFAULT_CONTROLLER_MODEL)),
             config=ControllerConfig(
                 enabled=True,
                 max_controller_calls_per_task=args.max_controller_calls,

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import time
 from typing import Any, Sequence
 
+from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
 from controller_agent.branching.checkpoint_capture_hook import CheckpointCaptureHook
 from controller_agent.integration.base import ExecutionInterceptionAdapter
 from controller_agent.state.schemas import InterceptionResult
@@ -91,6 +92,8 @@ class ControlledAppWorldRunner:
         budget: RunnerBudget | None = None,
         max_extra_turns_after_first_block: int | None = None,
         checkpoint_capture_hook: CheckpointCaptureHook | None = None,
+        branch_runtime_logger: BranchRuntimeLogger | None = None,
+        controller_prompt_hash: str | None = None,
     ) -> None:
         self.agent = agent
         self.adapter = adapter or AppWorldInterceptionAdapter()
@@ -111,6 +114,8 @@ class ControlledAppWorldRunner:
         self.cumulative_controller_output_tokens = 0
         self.checkpoint_capture_hook = checkpoint_capture_hook
         self.checkpoint_hook_errors: list[str] = []
+        self.branch_runtime_logger = branch_runtime_logger
+        self.controller_prompt_hash = controller_prompt_hash
         if hasattr(agent, "integration_adapter"):
             agent.integration_adapter = self.adapter
 
@@ -146,14 +151,16 @@ class ControlledAppWorldRunner:
                 self._record_controller_usage(result.interception.controller_response)
                 if self.first_block_turn is None:
                     self.first_block_turn = self._runtime_state().agent_turn_count
-                self.turn_events.append(self._blocked_event(result, world, turn_start))
+                self._append_turn_event(self._blocked_event(result, world, turn_start))
                 if self._extra_turn_limit_reached():
                     self.stop_reason = "blocked_extra_turns_exhausted"
                     self.turn_events[-1]["termination_reason"] = self.stop_reason
+                    self._finalize_last_branch_event(world)
                     break
                 if self._cost_limit_reached(task_id):
                     self.stop_reason = "cost_limit_reached"
                     self.turn_events[-1]["termination_reason"] = self.stop_reason
+                    self._finalize_last_branch_event(world)
                     break
                 execution_outputs = []
                 continue
@@ -171,34 +178,40 @@ class ControlledAppWorldRunner:
             if getattr(status, "failed", False):
                 self.stop_reason = "runner_or_api_error"
                 self._log_termination(getattr(status, "message", ""))
+                self._append_turn_event(
+                    self._budget_stop_event(result, execution_inputs, world, turn_start, self.stop_reason)
+                )
                 break
             if self._all_execution_inputs_empty(execution_inputs):
                 reminder_injected = False
                 if self.first_block_turn is not None and not self.empty_code_retry_used:
                     reminder_injected = self._inject_format_reminder()
                     self.empty_code_retry_used = True
-                    self.turn_events.append(
+                    self._append_turn_event(
                         self._empty_code_event(result, execution_inputs, world, turn_start, reminder_injected)
                     )
                     if self._extra_turn_limit_reached():
                         self.stop_reason = "blocked_extra_turns_exhausted"
                         self.turn_events[-1]["termination_reason"] = self.stop_reason
+                        self._finalize_last_branch_event(world)
                         break
                     if self._cost_limit_reached(task_id):
                         self.stop_reason = "cost_limit_reached"
                         self.turn_events[-1]["termination_reason"] = self.stop_reason
+                        self._finalize_last_branch_event(world)
                         break
                     execution_outputs = []
                     continue
-                self.turn_events.append(
+                self._append_turn_event(
                     self._empty_code_event(result, execution_inputs, world, turn_start, reminder_injected)
                 )
                 self.stop_reason = "model_format_failure"
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
+                self._finalize_last_branch_event(world)
                 break
             if self._environment_execution_limit_reached():
                 self.stop_reason = "max_environment_executions_reached"
-                self.turn_events.append(
+                self._append_turn_event(
                     self._budget_stop_event(result, execution_inputs, world, turn_start, self.stop_reason)
                 )
                 break
@@ -216,29 +229,34 @@ class ControlledAppWorldRunner:
                     last_execution_outputs=[output],
                 )
             task_completed = bool(world.task_completed())
-            self.turn_events.append(
-                self._executed_event(result, execution_inputs, world, task_completed, turn_start)
-            )
+            event = self._executed_event(result, execution_inputs, world, task_completed, turn_start)
+            event["environment_observation"] = self._outputs_content(execution_outputs)
+            self._append_turn_event(event)
             if task_completed:
                 self.stop_reason = "task_completed"
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
+                self._finalize_last_branch_event(world)
                 break
             if self._environment_execution_limit_reached():
                 self.stop_reason = "max_environment_executions_reached"
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
+                self._finalize_last_branch_event(world)
                 break
             if self._cost_limit_reached(task_id):
                 self.stop_reason = "cost_limit_reached"
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
+                self._finalize_last_branch_event(world)
                 break
             if self._extra_turn_limit_reached():
                 self.stop_reason = "blocked_extra_turns_exhausted"
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
+                self._finalize_last_branch_event(world)
                 break
         if self.stop_reason is None:
             self.stop_reason = "max_agent_turns_reached"
             if self.turn_events:
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
+                self._finalize_last_branch_event(world)
         self._capture_terminal(world)
 
     def _log_termination(self, message: str) -> None:
@@ -421,6 +439,7 @@ class ControlledAppWorldRunner:
         """Return common event fields for every runner turn."""
         state = self._runtime_state()
         return {
+            "step_number": int(getattr(getattr(self.agent, "agent", self.agent), "step_number", 0) or 0),
             "agent_turn_index": state.agent_turn_count,
             "environment_execution_index": state.environment_execution_count,
             "controller_call_count": state.total_calls,
@@ -436,6 +455,62 @@ class ControlledAppWorldRunner:
             "total_cost": self._total_cost(),
             "wall_time": time.perf_counter() - turn_start,
         }
+
+    def _append_turn_event(self, event: dict[str, Any]) -> None:
+        """Store an in-memory event and directly append its branch audit record."""
+        self.turn_events.append(event)
+        if self.branch_runtime_logger is None:
+            return
+        interception = getattr(self.agent, "last_interception_result", None)
+        response = getattr(interception, "controller_response", None)
+        controller_input = getattr(self.agent, "last_controller_input", None)
+        trigger = getattr(interception, "trigger_result", None)
+        guidance = getattr(interception, "guidance_message", None)
+        controller_call_id: str | None = None
+        if response is not None and controller_input is not None and trigger is not None:
+            controller_call_id = self.branch_runtime_logger.record_controller_call(
+                step_number=int(event["step_number"]),
+                controller_input=controller_input,
+                controller_response=response,
+                guidance=guidance,
+                blocked=not bool(event.get("execution_allowed")),
+                fail_open=response.decision.reason == "controller_failure_fallback",
+                prompt_hash=self.controller_prompt_hash,
+            )
+        agent_call_id = self.branch_runtime_logger.record_continuation(
+            step_number=int(event["step_number"]),
+            agent_output=self._latest_agent_output(event.get("generated_code", "")),
+            generated_code=str(event.get("generated_code", "")),
+            controller_triggered=trigger is not None,
+            controller_call_id=controller_call_id,
+            controller_action=event.get("controller_action"),
+            guidance=guidance,
+            execution_allowed=bool(event.get("execution_allowed")),
+            environment_observation=event.get("environment_observation"),
+            task_completed=bool(event.get("task_completed")),
+            termination_reason=event.get("termination_reason"),
+        )
+        event["agent_call_id"] = agent_call_id
+        event["controller_call_id"] = controller_call_id
+
+    def _finalize_last_branch_event(self, world: Any) -> None:
+        """Synchronize final task state into the direct continuation record."""
+        if self.branch_runtime_logger is None or not self.turn_events:
+            return
+        self.branch_runtime_logger.update_last_continuation(
+            task_completed=bool(world.task_completed()),
+            termination_reason=self.turn_events[-1].get("termination_reason"),
+        )
+
+    def _latest_agent_output(self, fallback: Any) -> str:
+        """Read the complete latest assistant output without changing history."""
+        target = getattr(self.agent, "agent", self.agent)
+        for message in reversed(list(getattr(target, "messages", []))):
+            if isinstance(message, dict) and str(message.get("role", "")).lower() == "assistant":
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content
+        return str(fallback)
 
     def _inject_format_reminder(self) -> bool:
         """Inject one short code-block format reminder."""

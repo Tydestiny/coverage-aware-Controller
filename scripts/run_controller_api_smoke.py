@@ -61,12 +61,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--task-id", default="23cf851_1")
-    parser.add_argument("--max-agent-turns", type=int, default=20)
-    parser.add_argument("--max-environment-executions", type=int, default=15)
-    parser.add_argument("--max-controller-calls", type=int, default=2)
-    parser.add_argument("--max-controller-blocks", type=int, default=1)
-    parser.add_argument("--max-extra-agent-turns-after-block", type=int, default=3)
-    parser.add_argument("--max-cost-cny", type=float, default=1.0)
+    parser.add_argument("--max-agent-turns", type=int, default=10_000)
+    parser.add_argument("--max-environment-executions", type=int, default=10_000)
+    parser.add_argument("--max-controller-calls", type=int, default=10_000)
+    parser.add_argument("--max-controller-blocks", type=int, default=10_000)
+    parser.add_argument("--max-extra-agent-turns-after-block", type=int, default=10_000)
+    parser.add_argument("--max-cost-cny", type=float, default=float("inf"))
     parser.add_argument("--retry-once", action="store_true", default=True)
     parser.add_argument("--capture-checkpoints", action="store_true")
     parser.add_argument("--checkpoint-root", default=str(REPO_ROOT / "results" / "checkpoints"))
@@ -220,13 +220,13 @@ def build_agent_config(args: argparse.Namespace, appworld_root: Path) -> dict[st
         "usage_tracker_config": {
             "max_cost_overall": args.max_cost_cny,
             "max_cost_per_task": args.max_cost_cny,
-            "max_output_tokens_per_task": 100000,
+            "max_output_tokens_per_task": float("inf"),
         },
         "prompt_file_path": str(appworld_root / "experiments" / "prompts" / "react_code_agent" / "instructions.txt"),
         "ignore_multiple_calls": True,
         "max_prompt_length": None,
         "max_output_length": None,
-        "max_steps": args.max_agent_turns + args.max_extra_agent_turns_after_block,
+        "max_steps": None,
         "log_lm_calls": True,
         "skip_if_finished": False,
     }
@@ -411,7 +411,7 @@ def sanitize_messages(value: Any) -> Any:
     if isinstance(value, str):
         value = re.sub(r"\bsk-[A-Za-z0-9_-]{20,}", "sk-[REDACTED]", value)
         return re.sub(
-            r"(?i)(\b(?:password|access_?token|refresh_?token|authorization|api_?key|secret|credential)\b\s*['\"]?\s*(?:=|:|\bis\b)\s*['\"]?)([^'\"\s,}\]]+)",
+            r"(?i)(\b(?:password|access_?token|refresh_?token|authorization|api_?key|secret|credential)\b(?:\\?[\"']?\s*)(?:=|:|\bis\b)\s*(?:\\?[\"']?))([^'\"\s,}\]\\]+)",
             r"\1[REDACTED]",
             value,
         )
