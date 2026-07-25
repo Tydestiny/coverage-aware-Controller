@@ -13,7 +13,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from controller_agent.logging.branch_artifacts import RUN_REQUIRED_FILES, read_jsonl, sha256_file
+from controller_agent.logging.branch_artifacts import (
+    CONTROLLER_ACTIONS,
+    RUN_REQUIRED_FILES,
+    read_jsonl,
+    sha256_file,
+)
 
 
 class ValidationErrors:
@@ -51,7 +56,12 @@ def main() -> int:
 def validate_experiment(experiment_root: Path) -> ValidationErrors:
     """Apply cross-file, token, path, and raw-log checks."""
     errors = ValidationErrors()
-    root_required = ("manifest.json", "branch_results.jsonl", "comparison_summary.jsonl")
+    root_required = (
+        "manifest.json",
+        "branch_results.jsonl",
+        "comparison_summary.jsonl",
+        "controller_results.jsonl",
+    )
     for name in root_required:
         errors.check((experiment_root / name).is_file(), f"missing root file: {name}")
     manifest_path = experiment_root / "manifest.json"
@@ -68,6 +78,8 @@ def validate_experiment(experiment_root: Path) -> ValidationErrors:
     errors.check(isinstance(run_entries, list), "manifest.runs must be a list")
     run_entries = run_entries if isinstance(run_entries, list) else []
     expected_results: dict[str, dict[str, Any]] = {}
+    branch_prefixes: dict[str, list[dict[str, Any]]] = {}
+    branch_contexts: dict[str, dict[str, Any]] = {}
     for entry in run_entries:
         if not isinstance(entry, dict):
             errors.messages.append("manifest run entry is not an object")
@@ -86,7 +98,26 @@ def validate_experiment(experiment_root: Path) -> ValidationErrors:
             )
             if result is not None:
                 expected_results[str(entry.get("branch"))] = result
+                trajectory = read_rows(run_dir / "trajectory.jsonl", errors)
+                branch_prefixes[str(entry.get("branch"))] = [
+                    normalize_shared_prefix_row(row)
+                    for row in trajectory
+                    if row.get("trajectory_segment") == "checkpoint_prefix"
+                ]
+                checkpoint_context = load_json(run_dir / "checkpoint_context.json", errors)
+                if checkpoint_context is not None:
+                    branch_contexts[str(entry.get("branch"))] = normalize_shared_prefix_row(checkpoint_context)
     validate_root_summaries(experiment_root, experiment_id, expected_results, errors)
+    if "baseline" in branch_prefixes and "controller" in branch_prefixes:
+        errors.check(
+            branch_prefixes["baseline"] == branch_prefixes["controller"],
+            "baseline and controller checkpoint prefixes differ",
+        )
+    if "baseline" in branch_contexts and "controller" in branch_contexts:
+        errors.check(
+            branch_contexts["baseline"] == branch_contexts["controller"],
+            "baseline and controller checkpoint contexts differ",
+        )
     return errors
 
 
@@ -106,7 +137,9 @@ def validate_run(
     manifest = load_json(run_dir / "manifest.json", errors)
     result = load_json(run_dir / "result.json", errors)
     evaluator = load_json(run_dir / "evaluator_result.json", errors)
-    if manifest is None or result is None or evaluator is None:
+    controller_summary = load_json(run_dir / "controller_summary.json", errors)
+    checkpoint_context = load_json(run_dir / "checkpoint_context.json", errors)
+    if manifest is None or result is None or evaluator is None or controller_summary is None or checkpoint_context is None:
         return result
     identity = {
         "experiment_id": experiment_id,
@@ -118,6 +151,8 @@ def validate_run(
     validate_identity(manifest, identity, f"{label}/manifest.json", errors)
     validate_identity(result, identity, f"{label}/result.json", errors)
     validate_identity(evaluator, identity, f"{label}/evaluator_result.json", errors)
+    validate_identity(controller_summary, identity, f"{label}/controller_summary.json", errors)
+    validate_identity(checkpoint_context, identity, f"{label}/checkpoint_context.json", errors)
     errors.check(result.get("branch") in {"baseline", "controller", "oracle"}, f"{label}: invalid branch")
     errors.check(bool(manifest.get("agent_model")), f"{label}: agent_model is missing")
     errors.check(bool(manifest.get("controller_model")), f"{label}: controller_model is missing")
@@ -132,13 +167,16 @@ def validate_run(
         for relative in required_paths:
             errors.check((run_dir / str(relative)).is_file(), f"{label}: invalid required file path {relative}")
 
+    trajectory = read_rows(run_dir / "trajectory.jsonl", errors)
     continuation = read_rows(run_dir / "continuation.jsonl", errors)
     controller_calls = read_rows(run_dir / "controller_calls.jsonl", errors)
+    controller_runtime_events = read_rows(run_dir / "controller_runtime_events.jsonl", errors)
     token_rows = read_rows(run_dir / "token_usage.jsonl", errors)
     for index, row in enumerate(continuation):
         validate_identity(row, identity, f"{label}/continuation[{index}]", errors)
         errors.check(row.get("sequence_index") == index, f"{label}: continuation sequence is not contiguous at {index}")
         errors.check(bool(row.get("event_id")), f"{label}: continuation row {index} lacks event_id")
+    validate_trajectory(label, manifest, result, trajectory, continuation, identity, errors)
     event_ids = {row.get("event_id") for row in continuation}
     for index, row in enumerate(controller_calls):
         validate_identity(row, identity, f"{label}/controller_calls[{index}]", errors)
@@ -155,6 +193,13 @@ def validate_run(
             isinstance(provider_raw, dict) and "available" in provider_raw,
             f"{label}: Controller call {index} lacks raw_response availability",
         )
+    for index, row in enumerate(controller_runtime_events):
+        validate_identity(row, identity, f"{label}/controller_runtime_events[{index}]", errors)
+        errors.check(
+            bool(row.get("controller_runtime_event_id")),
+            f"{label}: Controller runtime event {index} lacks its ID",
+        )
+        errors.check(row.get("event_id") in event_ids, f"{label}: Controller runtime event {index} has unknown event_id")
     for index, row in enumerate(token_rows):
         validate_identity(row, identity, f"{label}/token_usage[{index}]", errors)
         errors.check(row.get("source") in {"agent", "controller"}, f"{label}: token row {index} has invalid source")
@@ -164,13 +209,90 @@ def validate_run(
 
     validate_agent_usage(run_dir, result, token_rows, errors)
     validate_controller_usage(label, result, controller_calls, token_rows, errors)
+    validate_controller_summary(
+        label,
+        result,
+        controller_summary,
+        controller_calls,
+        controller_runtime_events,
+        token_rows,
+        errors,
+    )
     validate_combined_usage(label, result, errors)
     validate_raw_hashes(run_dir, manifest, errors)
     evaluator_path = run_dir / str(result.get("evaluator_result_path"))
     raw_logs_path = run_dir / str(result.get("raw_logs_path"))
+    trajectory_path = run_dir / str(result.get("trajectory_path"))
+    checkpoint_context_path = run_dir / str(result.get("checkpoint_context_path"))
+    controller_summary_path = run_dir / str(result.get("controller_summary_path"))
     errors.check(evaluator_path.is_file(), f"{label}: evaluator_result_path is invalid")
     errors.check(raw_logs_path.is_dir(), f"{label}: raw_logs_path is invalid")
+    errors.check(trajectory_path.is_file(), f"{label}: trajectory_path is invalid")
+    errors.check(checkpoint_context_path.is_file(), f"{label}: checkpoint_context_path is invalid")
+    errors.check(controller_summary_path.is_file(), f"{label}: controller_summary_path is invalid")
+    checkpoint_source = manifest.get("checkpoint") if isinstance(manifest.get("checkpoint"), dict) else {}
+    errors.check(
+        checkpoint_context.get("checkpoint_sha256") == checkpoint_source.get("sha256"),
+        f"{label}: checkpoint context hash mismatch",
+    )
+    errors.check(
+        checkpoint_context.get("agent_turn_index") == result.get("checkpoint_boundary_agent_turn_index"),
+        f"{label}: checkpoint context boundary mismatch",
+    )
     return result
+
+
+def validate_trajectory(
+    label: str,
+    manifest: dict[str, Any],
+    result: dict[str, Any],
+    trajectory: list[dict[str, Any]],
+    continuation: list[dict[str, Any]],
+    identity: dict[str, Any],
+    errors: ValidationErrors,
+) -> None:
+    """Require a complete, unambiguous prefix-plus-continuation trajectory."""
+    for index, row in enumerate(trajectory):
+        validate_identity(row, identity, f"{label}/trajectory[{index}]", errors)
+        errors.check(row.get("sequence_index") == index, f"{label}: trajectory sequence is not contiguous at {index}")
+        errors.check(bool(row.get("event_id")), f"{label}: trajectory row {index} lacks event_id")
+        errors.check(
+            row.get("trajectory_segment") in {"checkpoint_prefix", "branch_continuation"},
+            f"{label}: trajectory row {index} has invalid segment",
+        )
+    event_ids = [row.get("event_id") for row in trajectory]
+    errors.check(len(event_ids) == len(set(event_ids)), f"{label}: trajectory event_ids are not unique")
+    prefix = [row for row in trajectory if row.get("trajectory_segment") == "checkpoint_prefix"]
+    suffix = [row for row in trajectory if row.get("trajectory_segment") == "branch_continuation"]
+    errors.check(bool(prefix), f"{label}: trajectory checkpoint prefix is empty")
+    errors.check(len(suffix) == len(continuation), f"{label}: trajectory continuation length mismatch")
+    errors.check(
+        [row.get("event_id") for row in suffix] == [row.get("event_id") for row in continuation],
+        f"{label}: trajectory continuation does not match continuation.jsonl",
+    )
+    errors.check(
+        [row.get("segment_sequence_index") for row in suffix] == list(range(len(suffix))),
+        f"{label}: trajectory continuation segment sequence is not contiguous",
+    )
+    boundary = result.get("checkpoint_boundary_agent_turn_index")
+    if prefix:
+        errors.check(prefix[-1].get("agent_turn_index") == boundary, f"{label}: checkpoint boundary mismatch")
+    errors.check(result.get("trajectory_prefix_events") == len(prefix), f"{label}: prefix event count mismatch")
+    errors.check(result.get("continuation_events") == len(continuation), f"{label}: continuation event count mismatch")
+    errors.check(
+        result.get("token_accounting_scope") == "branch_continuation_only",
+        f"{label}: token scope must exclude the shared checkpoint prefix",
+    )
+    manifest_trajectory = manifest.get("trajectory") if isinstance(manifest.get("trajectory"), dict) else {}
+    errors.check(manifest_trajectory.get("path") == "trajectory.jsonl", f"{label}: manifest trajectory path mismatch")
+    errors.check(
+        manifest_trajectory.get("prefix_event_count") == len(prefix),
+        f"{label}: manifest prefix event count mismatch",
+    )
+    errors.check(
+        manifest_trajectory.get("continuation_event_count") == len(continuation),
+        f"{label}: manifest continuation event count mismatch",
+    )
 
 
 def validate_agent_usage(
@@ -209,6 +331,11 @@ def validate_controller_usage(
     """Reconcile Controller call records, token ledger, and result summary."""
     controller_rows = [row for row in token_rows if row.get("source") == "controller"]
     errors.check(len(controller_rows) == len(controller_calls), f"{label}: Controller call/token row count mismatch")
+    call_ids = [row.get("controller_call_id") for row in controller_calls]
+    token_call_ids = [row.get("call_id") for row in controller_rows]
+    errors.check(len(call_ids) == len(set(call_ids)), f"{label}: duplicate Controller call IDs")
+    errors.check(len(token_call_ids) == len(set(token_call_ids)), f"{label}: duplicate Controller token call IDs")
+    errors.check(set(call_ids) == set(token_call_ids), f"{label}: Controller call/token IDs disagree")
     ledger_input = sum_known(row.get("input_tokens") for row in controller_rows)
     ledger_output = sum_known(row.get("output_tokens") for row in controller_rows)
     call_input = sum_known(row.get("input_tokens") for row in controller_calls)
@@ -219,6 +346,104 @@ def validate_controller_usage(
     errors.check(controller_result.get("input_tokens") == ledger_input, f"{label}: result Controller input mismatch")
     errors.check(controller_result.get("output_tokens") == ledger_output, f"{label}: result Controller output mismatch")
     errors.check(result.get("controller_calls") == len(controller_calls), f"{label}: result controller_calls mismatch")
+
+
+def validate_controller_summary(
+    label: str,
+    result: dict[str, Any],
+    summary: dict[str, Any],
+    controller_calls: list[dict[str, Any]],
+    controller_runtime_events: list[dict[str, Any]],
+    token_rows: list[dict[str, Any]],
+    errors: ValidationErrors,
+) -> None:
+    """Check the Controller-only derived record against the source ledgers."""
+    controller_rows = [row for row in token_rows if row.get("source") == "controller"]
+    errors.check(summary.get("enabled") is (result.get("branch") == "controller"), f"{label}: Controller enabled mismatch")
+    errors.check(summary.get("calls") == len(controller_calls), f"{label}: Controller summary call mismatch")
+    errors.check(
+        summary.get("blocks") == sum(1 for call in controller_calls if call.get("blocked")),
+        f"{label}: Controller summary block mismatch",
+    )
+    summary_tokens = summary.get("tokens") if isinstance(summary.get("tokens"), dict) else {}
+    expected_input = sum_known(row.get("input_tokens") for row in controller_rows)
+    expected_output = sum_known(row.get("output_tokens") for row in controller_rows)
+    errors.check(summary_tokens.get("input_tokens") == expected_input, f"{label}: Controller summary input mismatch")
+    errors.check(summary_tokens.get("output_tokens") == expected_output, f"{label}: Controller summary output mismatch")
+    errors.check(summary_tokens == result.get("controller_tokens"), f"{label}: Controller summary/result tokens disagree")
+    expected_fail_open = (
+        sum(1 for call in controller_calls if call.get("fail_open"))
+        + sum(1 for event in controller_runtime_events if event.get("event_type") == "controller_fail_open")
+    )
+    errors.check(summary.get("fail_open_count") == expected_fail_open, f"{label}: Controller fail-open mismatch")
+    errors.check(result.get("fail_open_count") == expected_fail_open, f"{label}: result fail-open mismatch")
+    errors.check(summary.get("accounting_scope") == "branch_continuation_only", f"{label}: Controller scope mismatch")
+    expected_actions = {action: 0 for action in CONTROLLER_ACTIONS}
+    for call in controller_calls:
+        action = call.get("action")
+        if action in expected_actions:
+            expected_actions[action] += 1
+    errors.check(summary.get("action_counts") == expected_actions, f"{label}: Controller action histogram mismatch")
+    errors.check(sum(expected_actions.values()) == len(controller_calls), f"{label}: unknown Controller action")
+    errors.check(summary.get("blocks", 0) <= summary.get("calls", 0), f"{label}: Controller blocks exceed calls")
+    errors.check(
+        all(not call.get("blocked") or call.get("action") != "PROCEED" for call in controller_calls),
+        f"{label}: PROCEED call cannot be blocked",
+    )
+    fail_open_by_reason = summary.get("fail_open_by_reason")
+    errors.check(isinstance(fail_open_by_reason, dict), f"{label}: fail_open_by_reason must be an object")
+    if isinstance(fail_open_by_reason, dict):
+        errors.check(
+            sum(int(value) for value in fail_open_by_reason.values()) == expected_fail_open,
+            f"{label}: fail-open reason histogram mismatch",
+        )
+    validate_nullable_metric_summary(
+        label,
+        "Controller cost",
+        summary.get("cost_cny"),
+        [row.get("cost") for row in controller_rows],
+        errors,
+    )
+    validate_nullable_metric_summary(
+        label,
+        "Controller latency",
+        summary.get("latency_seconds"),
+        [
+            call.get("controller_response", {}).get("latency_seconds")
+            for call in controller_calls
+            if isinstance(call.get("controller_response"), dict)
+        ],
+        errors,
+        include_average=True,
+    )
+    if result.get("branch") == "baseline":
+        errors.check(summary.get("enabled") is False, f"{label}: baseline Controller must be disabled")
+        errors.check(summary.get("calls") == 0, f"{label}: baseline Controller calls must be zero")
+        errors.check(summary_tokens == {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, f"{label}: baseline Controller tokens must be zero")
+
+
+def validate_nullable_metric_summary(
+    label: str,
+    metric_label: str,
+    summary: Any,
+    values: list[Any],
+    errors: ValidationErrors,
+    *,
+    include_average: bool = False,
+) -> None:
+    """Validate one Controller metric with explicit missing-value counts."""
+    errors.check(isinstance(summary, dict), f"{label}: {metric_label} summary must be an object")
+    if not isinstance(summary, dict):
+        return
+    known = [value for value in values if value is not None]
+    expected_total = 0 if not values else (None if len(known) != len(values) else sum(values))
+    errors.check(summary.get("total") == expected_total, f"{label}: {metric_label} total mismatch")
+    errors.check(summary.get("known_calls") == len(known), f"{label}: {metric_label} known count mismatch")
+    errors.check(summary.get("unknown_calls") == len(values) - len(known), f"{label}: {metric_label} unknown count mismatch")
+    errors.check(all(value >= 0 for value in known), f"{label}: {metric_label} contains negative values")
+    if include_average:
+        expected_average = None if not values or len(known) != len(values) else sum(values) / len(values)
+        errors.check(summary.get("average") == expected_average, f"{label}: {metric_label} average mismatch")
 
 
 def validate_combined_usage(label: str, result: dict[str, Any], errors: ValidationErrors) -> None:
@@ -277,6 +502,24 @@ def validate_root_summaries(
                 row.get("controller_success") == expected_results["controller"].get("success"),
                 "comparison controller_success mismatch",
             )
+    controller_rows = read_rows(experiment_root / "controller_results.jsonl", errors)
+    controller_branches = {row.get("branch") for row in controller_rows}
+    errors.check(
+        {"baseline", "controller"}.issubset(controller_branches),
+        "controller_results must contain baseline and controller",
+    )
+    for index, row in enumerate(controller_rows):
+        errors.check(row.get("experiment_id") == experiment_id, f"controller_results row {index} experiment_id mismatch")
+        summary_path = experiment_root / str(row.get("summary_path"))
+        errors.check(summary_path.is_file(), f"controller_results row {index} has invalid summary_path")
+        if summary_path.is_file():
+            summary = load_json(summary_path, errors)
+            if summary is not None:
+                errors.check(row.get("calls") == summary.get("calls"), f"controller_results row {index} call mismatch")
+                errors.check(
+                    row.get("total_tokens") == summary.get("tokens", {}).get("total_tokens"),
+                    f"controller_results row {index} token mismatch",
+                )
 
 
 def validate_identity(
@@ -288,6 +531,12 @@ def validate_identity(
     """Require the shared experiment/run/checkpoint identity fields."""
     for key, expected_value in expected.items():
         errors.check(value.get(key) == expected_value, f"{label}: {key} mismatch")
+
+
+def normalize_shared_prefix_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Remove branch-specific identity fields before prefix equality checks."""
+    ignored = {"experiment_id", "run_id", "branch", "event_id"}
+    return {key: value for key, value in row.items() if key not in ignored}
 
 
 def load_json(path: Path, errors: ValidationErrors) -> dict[str, Any] | None:

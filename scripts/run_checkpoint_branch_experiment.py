@@ -28,10 +28,15 @@ from controller_agent.logging.branch_artifacts import (
     RunIdentity,
     TokenUsageLedger,
     branch_result_row,
+    build_checkpoint_context,
+    build_checkpoint_prefix_rows,
     build_continuation_rows,
+    build_controller_summary,
+    build_full_trajectory_rows,
     build_run_manifest,
     combined_usage,
     comparison_row,
+    controller_result_row,
     copy_raw_logs,
     extract_final_answer,
     normalize_evaluator_result,
@@ -182,6 +187,7 @@ def run_branch(
     token_ledger = TokenUsageLedger(run_dir / "token_usage.jsonl", identity)
     logger = PersistentExperimentLogger(
         path=run_dir / "controller_calls.jsonl",
+        runtime_events_path=run_dir / "controller_runtime_events.jsonl",
         identity=identity,
         token_ledger=token_ledger,
         prompt_hash=prompt_hash,
@@ -283,6 +289,11 @@ def run_branch(
     if continuation and continuation[-1].get("termination_reason") is None:
         continuation[-1]["termination_reason"] = lifecycle_error or (None if runner is None else runner.stop_reason)
     write_jsonl(run_dir / "continuation.jsonl", continuation)
+    checkpoint_context = build_checkpoint_context(identity, checkpoint, checkpoint_path)
+    write_json(run_dir / "checkpoint_context.json", checkpoint_context)
+    prefix = build_checkpoint_prefix_rows(identity, source_task_dir, checkpoint)
+    trajectory = build_full_trajectory_rows(prefix, continuation)
+    write_jsonl(run_dir / "trajectory.jsonl", trajectory)
 
     evaluator_version = read_text(appworld_task_dir / "evaluation" / "version.txt")
     report_path = appworld_task_dir / "evaluation" / "report.md"
@@ -306,6 +317,18 @@ def run_branch(
     controller_tokens = usage_summary(usage_rows, "controller")
     combined_tokens = combined_usage(agent_tokens, controller_tokens)
     controller_calls = read_jsonl(run_dir / "controller_calls.jsonl")
+    controller_runtime_events = read_jsonl(run_dir / "controller_runtime_events.jsonl")
+    controller_summary = build_controller_summary(
+        identity=identity,
+        enabled=branch == "controller",
+        model=CONTROLLER_MODEL,
+        prompt_version=args.controller_prompt,
+        prompt_hash=prompt_hash,
+        controller_calls=controller_calls,
+        runtime_events=controller_runtime_events,
+        token_rows=usage_rows,
+    )
+    write_json(run_dir / "controller_summary.json", controller_summary)
     success = evaluator.get("success")
     result = identity.to_dict() | {
         "final_answer": extract_final_answer(continuation),
@@ -318,13 +341,17 @@ def run_branch(
         "environment_executions": sum(1 for event in continuation if event["world_batch_execute_called"]),
         "controller_calls": len(controller_calls),
         "controller_blocks": sum(1 for call in controller_calls if call.get("blocked")),
-        "fail_open_count": (
-            sum(1 for call in controller_calls if call.get("fail_open"))
-            + sum(1 for event in logger.events if event.get("event_type") == "controller_fail_open")
-        ),
+        "fail_open_count": controller_summary["fail_open_count"],
         "agent_tokens": agent_tokens,
         "controller_tokens": controller_tokens,
         "combined_tokens": combined_tokens,
+        "trajectory_path": "trajectory.jsonl",
+        "checkpoint_context_path": "checkpoint_context.json",
+        "trajectory_prefix_events": len(prefix),
+        "continuation_events": len(continuation),
+        "checkpoint_boundary_agent_turn_index": int(checkpoint["agent_turn_index"]),
+        "token_accounting_scope": "branch_continuation_only",
+        "controller_summary_path": "controller_summary.json",
         "evaluator_result_path": "evaluator_result.json",
         "raw_logs_path": "raw_logs",
         "lifecycle_error": lifecycle_error,
@@ -345,6 +372,17 @@ def run_branch(
         appworld_code_version=read_text(appworld_task_dir / "version" / "code.txt"),
         appworld_data_version=read_text(appworld_task_dir / "version" / "data.txt"),
         raw_log_hashes=raw_log_hashes,
+        trajectory_summary={
+            "path": "trajectory.jsonl",
+            "prefix_event_count": len(prefix),
+            "continuation_event_count": len(continuation),
+            "checkpoint_boundary_agent_turn_index": int(checkpoint["agent_turn_index"]),
+            "token_accounting_scope": "branch_continuation_only",
+            "checkpoint_context_path": "checkpoint_context.json",
+            "checkpoint_cumulative_agent_tokens": checkpoint.get("cumulative_agent_tokens"),
+            "checkpoint_cumulative_controller_tokens": checkpoint.get("cumulative_controller_tokens"),
+            "checkpoint_cumulative_cost": checkpoint.get("cumulative_cost"),
+        },
     )
     write_json(run_dir / "manifest.json", manifest)
     return 0 if lifecycle_error is None else 1
@@ -354,6 +392,7 @@ def summarize_experiment(experiment_root: Path, task_id: str, checkpoint_id: str
     """Generate the two root JSONL summaries from completed branch results."""
     results: dict[str, dict[str, Any]] = {}
     rows: list[dict[str, Any]] = []
+    controller_rows: list[dict[str, Any]] = []
     for branch in BRANCHES:
         run_id = f"{task_id}__{checkpoint_id}__{branch}"
         result_path = experiment_root / "runs" / run_id / "result.json"
@@ -362,7 +401,17 @@ def summarize_experiment(experiment_root: Path, task_id: str, checkpoint_id: str
         result = json.loads(result_path.read_text(encoding="utf-8"))
         results[branch] = result
         rows.append(branch_result_row(result, result_path.relative_to(experiment_root)))
+        controller_summary_path = result_path.parent / "controller_summary.json"
+        if controller_summary_path.exists():
+            controller_summary = json.loads(controller_summary_path.read_text(encoding="utf-8"))
+            controller_rows.append(
+                controller_result_row(
+                    controller_summary,
+                    controller_summary_path.relative_to(experiment_root),
+                )
+            )
     write_jsonl(experiment_root / "branch_results.jsonl", rows)
+    write_jsonl(experiment_root / "controller_results.jsonl", controller_rows)
     comparisons: list[dict[str, Any]] = []
     if all(branch in results for branch in BRANCHES):
         identity = RunIdentity(args_experiment_id(results), "comparison", task_id, checkpoint_id, "comparison")
@@ -406,6 +455,11 @@ def experiment_manifest(
         "trigger": {"enabled": ["before_finish"]},
         "branches": list(ALL_BRANCHES),
         "executed_branches": list(BRANCHES),
+        "artifacts": {
+            "branch_results": "branch_results.jsonl",
+            "comparison_summary": "comparison_summary.jsonl",
+            "controller_results": "controller_results.jsonl",
+        },
         "runs": runs,
     }
 

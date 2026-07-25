@@ -11,7 +11,10 @@ from controller_agent.logging.branch_artifacts import (
     PersistentExperimentLogger,
     RunIdentity,
     TokenUsageLedger,
+    build_checkpoint_prefix_rows,
     build_continuation_rows,
+    build_controller_summary,
+    build_full_trajectory_rows,
     comparison_row,
     read_jsonl,
 )
@@ -141,6 +144,44 @@ def test_controller_call_persists_exact_runtime_input_and_provider_response(tmp_
     assert usage[0]["total_tokens"] == 50
 
 
+def test_controller_runtime_fail_open_is_persisted_and_summarized(tmp_path: Path) -> None:
+    token_ledger = TokenUsageLedger(tmp_path / "token_usage.jsonl", identity())
+    logger = PersistentExperimentLogger(
+        path=tmp_path / "controller_calls.jsonl",
+        runtime_events_path=tmp_path / "controller_runtime_events.jsonl",
+        identity=identity(),
+        token_ledger=token_ledger,
+        prompt_hash="prompt-hash",
+    )
+    trigger = TriggerResult(True, "before_finish", {"api_name": "complete_task"})
+
+    logger.log_runtime_event(
+        task_id="task",
+        step_index=10,
+        event_type="controller_fail_open",
+        reason="controller_budget_exhausted",
+        trigger=trigger,
+        error=None,
+        runtime_state=ControllerRuntimeState(total_calls=1, total_blocks=1),
+    )
+
+    runtime_events = read_jsonl(tmp_path / "controller_runtime_events.jsonl")
+    summary = build_controller_summary(
+        identity=identity(),
+        enabled=True,
+        model="controller-model",
+        prompt_version="g1",
+        prompt_hash="prompt-hash",
+        controller_calls=[],
+        runtime_events=runtime_events,
+        token_rows=[],
+    )
+    assert runtime_events[0]["reason"] == "controller_budget_exhausted"
+    assert summary["fail_open_count"] == 1
+    assert summary["fail_open_by_reason"] == {"controller_budget_exhausted": 1}
+    assert summary["tokens"] == {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+
+
 def test_continuation_keeps_blocked_agent_call_and_shared_event_id(tmp_path: Path) -> None:
     del tmp_path
     calls = [
@@ -170,6 +211,76 @@ def test_continuation_keeps_blocked_agent_call_and_shared_event_id(tmp_path: Pat
     assert rows[0]["sequence_index"] == 0
     assert rows[0]["execution_allowed"] is False
     assert rows[0]["guidance_injected"] is True
+
+
+def test_full_trajectory_preserves_prefix_and_marks_branch_boundary(tmp_path: Path) -> None:
+    source_task_dir = tmp_path / "source_task"
+    post_dir = source_task_dir / "checkpoints" / "post_observation"
+    collection_dir = source_task_dir / "collection"
+    post_dir.mkdir(parents=True)
+    collection_dir.mkdir(parents=True)
+    checkpoints = []
+    for turn in (1, 3):
+        checkpoint = {
+            "checkpoint_id": f"checkpoint_{turn}",
+            "task_id": "task",
+            "phase": "post_observation",
+            "agent_turn_index": turn,
+            "environment_execution_index": turn - 1,
+            "agent_messages": [{"role": "assistant", "content": f"output-{turn}"}],
+            "executed_code": f"code-{turn}",
+            "last_execution_outputs": [f"observation-{turn}"],
+        }
+        checkpoints.append(checkpoint)
+        (post_dir / f"checkpoint_{turn}.json").write_text(json.dumps(checkpoint), encoding="utf-8")
+    source_events = [
+        {
+            "agent_turn_index": 1,
+            "environment_execution_index": 1,
+            "generated_code": "code-1",
+            "execution_allowed": True,
+            "world_batch_execute_called": True,
+        },
+        {
+            "agent_turn_index": 2,
+            "environment_execution_index": 1,
+            "generated_code": "blocked-code",
+            "trigger_detected": True,
+            "controller_action": "REPLAN",
+            "execution_allowed": False,
+            "guidance_injected": True,
+            "world_batch_execute_called": False,
+        },
+        {
+            "agent_turn_index": 3,
+            "environment_execution_index": 2,
+            "generated_code": "code-3",
+            "execution_allowed": True,
+            "world_batch_execute_called": True,
+        },
+    ]
+    (collection_dir / "turn_events.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in source_events),
+        encoding="utf-8",
+    )
+    prefix = build_checkpoint_prefix_rows(identity(), source_task_dir, checkpoints[-1])
+    continuation = [
+        identity().to_dict()
+        | {
+            "event_id": identity().event_id(4),
+            "sequence_index": 0,
+            "agent_turn_index": 4,
+        }
+    ]
+
+    trajectory = build_full_trajectory_rows(prefix, continuation)
+
+    assert [row["agent_turn_index"] for row in prefix] == [1, 2, 3]
+    assert prefix[1]["source_checkpoint_id"] is None
+    assert prefix[1]["execution_allowed"] is False
+    assert [row["sequence_index"] for row in trajectory] == [0, 1, 2, 3]
+    assert trajectory[-1]["trajectory_segment"] == "branch_continuation"
+    assert trajectory[-1]["segment_sequence_index"] == 0
 
 
 def test_comparison_score_difference_has_no_float_noise() -> None:

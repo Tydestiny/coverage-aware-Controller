@@ -135,6 +135,48 @@ The AppWorld simplified ReAct Agent exposes message state, but the Python execut
 
 Future branch continuation should either replay the code prefix after loading AppWorld state or add a separately reviewed namespace capture mechanism.
 
+## Restored-Branch Analysis Artifacts
+
+Restored branch runs keep two deliberately different trajectory views:
+
+- `continuation.jsonl` is the authoritative checkpoint-after branch. Branch
+  tokens, cost, success, and baseline-versus-Controller comparisons use only
+  this scope.
+- `trajectory.jsonl` is the directly readable complete view. It materializes the
+  common `checkpoint_prefix` followed by the branch-specific
+  `branch_continuation` and marks both segments explicitly.
+- `checkpoint_context.json` preserves the exact checkpoint-visible messages,
+  executed-code prefix, boundary indices, and cumulative prefix usage needed to
+  interpret the complete view.
+
+The prefix is built from the source collection's `turn_events.jsonl` when
+available so that blocked turns are retained. Post-observation checkpoints add
+the exact Agent output and observation. Each full row has a global
+`sequence_index`, a segment-local `segment_sequence_index`, and a stable
+`event_id`. Validation requires both experimental branches to have identical
+prefixes and requires the continuation segment to match `continuation.jsonl`.
+
+Checkpoint cumulative token and cost values remain prefix metadata. They are not
+inserted into branch `token_usage.jsonl`, preventing the common prefix from being
+counted twice in comparisons. This is recorded as
+`branch_continuation_only` accounting scope.
+
+Controller data is separated for later analysis without duplicating the token
+source of truth:
+
+- `controller_calls.jsonl` stores exact runtime calls and responses;
+- `controller_runtime_events.jsonl` stores non-call fail-open and budget events
+  at occurrence;
+- `token_usage.jsonl` remains the unique per-call ledger and distinguishes
+  Controller rows with `source=controller`;
+- `controller_summary.json` derives calls, blocks, fail-open reasons, the fixed
+  action histogram, tokens, cost availability, and latency availability;
+- root `controller_results.jsonl` provides one batch-readable summary row per
+  branch, including an explicit zero-call baseline row.
+
+These additions do not change the checkpoint schema, Trigger, Controller Prompt,
+Action enum, fail-open behavior, AppWorld main loop, or evaluator.
+
 ## Safety Rules
 
 - The hook must not read evaluator results, ground truth answers, hidden task state, or future trajectory.

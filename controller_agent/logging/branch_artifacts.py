@@ -26,10 +26,22 @@ RAW_LOG_SOURCES = {
     "usage.json": ("misc", "usage.json"),
 }
 
+CONTROLLER_ACTIONS = (
+    "PROCEED",
+    "VERIFY_TARGET_SET",
+    "LOOKUP_API_SPEC",
+    "REPLAN",
+    "BLOCK_RISKY_ACTION",
+)
+
 RUN_REQUIRED_FILES = (
     "manifest.json",
+    "checkpoint_context.json",
+    "trajectory.jsonl",
     "continuation.jsonl",
     "controller_calls.jsonl",
+    "controller_runtime_events.jsonl",
+    "controller_summary.json",
     "token_usage.jsonl",
     "result.json",
     "evaluator_result.json",
@@ -62,6 +74,10 @@ class RunIdentity:
     def controller_call_id(self, call_index: int) -> str:
         """Return a stable Controller call identifier."""
         return f"{self.run_id}__controller_{call_index:04d}"
+
+    def controller_runtime_event_id(self, event_index: int) -> str:
+        """Return a stable identifier for a non-call Controller runtime event."""
+        return f"{self.run_id}__controller_runtime_{event_index:04d}"
 
 
 class JsonlLedger:
@@ -160,6 +176,7 @@ class PersistentExperimentLogger(ExperimentLogger):
         self,
         *,
         path: Path,
+        runtime_events_path: Path | None = None,
         identity: RunIdentity,
         token_ledger: TokenUsageLedger,
         prompt_hash: str,
@@ -167,9 +184,13 @@ class PersistentExperimentLogger(ExperimentLogger):
         super().__init__()
         self.identity = identity
         self.call_ledger = JsonlLedger(path)
+        self.runtime_event_ledger = JsonlLedger(
+            runtime_events_path or path.with_name("controller_runtime_events.jsonl")
+        )
         self.token_ledger = token_ledger
         self.prompt_hash = prompt_hash
         self._call_count = 0
+        self._runtime_event_count = 0
 
     def log_controller_event(
         self,
@@ -244,6 +265,46 @@ class PersistentExperimentLogger(ExperimentLogger):
             turn_index=turn_index,
             response=response,
         )
+
+    def log_runtime_event(
+        self,
+        *,
+        task_id: str,
+        step_index: int,
+        event_type: str,
+        reason: str,
+        trigger: Any,
+        error: str | None,
+        runtime_state: Any,
+    ) -> None:
+        """Persist fail-open and budget events when they occur."""
+        super().log_runtime_event(
+            task_id=task_id,
+            step_index=step_index,
+            event_type=event_type,
+            reason=reason,
+            trigger=trigger,
+            error=error,
+            runtime_state=runtime_state,
+        )
+        self._runtime_event_count += 1
+        row = self.identity.to_dict() | {
+            "controller_runtime_event_id": self.identity.controller_runtime_event_id(self._runtime_event_count),
+            "event_id": self.identity.event_id(int(step_index)),
+            "event_type": event_type,
+            "reason": reason,
+            "trigger": (
+                None
+                if trigger is None
+                else {
+                    "reason": trigger.reason,
+                    "metadata": copy.deepcopy(trigger.metadata),
+                }
+            ),
+            "error": error,
+            "runtime_state": _jsonable(runtime_state),
+        }
+        self.runtime_event_ledger.append(row)
 
 
 class AgentCallAuditor:
@@ -341,6 +402,197 @@ def build_continuation_rows(
     return rows
 
 
+def build_checkpoint_prefix_rows(
+    identity: RunIdentity,
+    source_task_dir: Path,
+    selected_checkpoint: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Materialize the immutable trajectory prefix ending at a checkpoint.
+
+    Runtime turn events are preferred because they also retain blocked turns. The
+    post-observation checkpoints supply exact observations and Agent messages.
+    """
+    selected_turn = int(selected_checkpoint["agent_turn_index"])
+    checkpoint_dir = source_task_dir / "checkpoints" / "post_observation"
+    checkpoints: dict[int, dict[str, Any]] = {}
+    for path in sorted(checkpoint_dir.glob("*.json")):
+        checkpoint = json.loads(path.read_text(encoding="utf-8"))
+        if checkpoint.get("task_id") != identity.task_id or checkpoint.get("phase") != "post_observation":
+            continue
+        turn_index = int(checkpoint["agent_turn_index"])
+        if turn_index <= selected_turn:
+            checkpoints[turn_index] = checkpoint
+    if selected_turn not in checkpoints:
+        checkpoints[selected_turn] = copy.deepcopy(selected_checkpoint)
+
+    source_events_path = source_task_dir / "collection" / "turn_events.jsonl"
+    source_events = [
+        event
+        for event in read_jsonl(source_events_path)
+        if int(event.get("agent_turn_index") or 0) <= selected_turn
+    ]
+    if not source_events:
+        source_events = [
+            {
+                "agent_turn_index": checkpoint["agent_turn_index"],
+                "environment_execution_index": checkpoint.get("environment_execution_index"),
+                "generated_code": checkpoint.get("executed_code", ""),
+                "execution_allowed": True,
+                "world_batch_execute_called": True,
+            }
+            for checkpoint in sorted(checkpoints.values(), key=lambda value: int(value["agent_turn_index"]))
+        ]
+
+    rows: list[dict[str, Any]] = []
+    for sequence_index, event in enumerate(source_events):
+        turn_index = int(event["agent_turn_index"])
+        checkpoint = checkpoints.get(turn_index)
+        observation = None if checkpoint is None else checkpoint.get("last_execution_outputs")
+        if isinstance(observation, list):
+            observation = "\n".join(str(item) for item in observation)
+        trigger_reason = event.get("trigger_reason")
+        if trigger_reason is None and event.get("trigger_detected"):
+            trigger_reason = "before_finish"
+        rows.append(
+            identity.to_dict()
+            | {
+                "event_id": identity.event_id(turn_index),
+                "sequence_index": sequence_index,
+                "segment_sequence_index": sequence_index,
+                "trajectory_segment": "checkpoint_prefix",
+                "source_checkpoint_id": None if checkpoint is None else checkpoint.get("checkpoint_id"),
+                "agent_turn_index": turn_index,
+                "environment_execution_index": event.get("environment_execution_index"),
+                "agent_output": (
+                    None if checkpoint is None else latest_assistant_output_from_messages(checkpoint.get("agent_messages"))
+                ),
+                "generated_code": event.get(
+                    "generated_code",
+                    "" if checkpoint is None else checkpoint.get("executed_code", ""),
+                ),
+                "environment_observation": observation,
+                "trigger": {
+                    "detected": bool(event.get("trigger_detected")),
+                    "reason": trigger_reason,
+                    "action": event.get("controller_action"),
+                },
+                "execution_allowed": event.get("execution_allowed"),
+                "guidance_injected": bool(event.get("guidance_injected")),
+                "world_batch_execute_called": bool(event.get("world_batch_execute_called")),
+                "task_completed": bool(event.get("task_completed")),
+                "termination_reason": event.get("termination_reason"),
+            }
+        )
+    if not rows or rows[-1]["agent_turn_index"] != selected_turn:
+        raise ValueError(f"trajectory prefix does not end at checkpoint turn {selected_turn}")
+    return rows
+
+
+def build_checkpoint_context(
+    identity: RunIdentity,
+    checkpoint: dict[str, Any],
+    checkpoint_path: Path,
+) -> dict[str, Any]:
+    """Preserve the exact shared context needed to interpret the prefix."""
+    return identity.to_dict() | {
+        "checkpoint_source_path": str(checkpoint_path),
+        "checkpoint_sha256": sha256_file(checkpoint_path),
+        "agent_turn_index": checkpoint.get("agent_turn_index"),
+        "environment_execution_index": checkpoint.get("environment_execution_index"),
+        "appworld_state_id": checkpoint.get("appworld_state_id"),
+        "phase": checkpoint.get("phase"),
+        "agent_messages": copy.deepcopy(checkpoint.get("agent_messages", [])),
+        "executed_code_prefix": copy.deepcopy(checkpoint.get("executed_code_prefix", [])),
+        "last_execution_outputs": copy.deepcopy(checkpoint.get("last_execution_outputs", [])),
+        "cumulative_agent_tokens": copy.deepcopy(checkpoint.get("cumulative_agent_tokens")),
+        "cumulative_controller_tokens": copy.deepcopy(checkpoint.get("cumulative_controller_tokens")),
+        "cumulative_cost": checkpoint.get("cumulative_cost"),
+        "controller_runtime_state": copy.deepcopy(checkpoint.get("controller_runtime_state")),
+        "accounting_note": (
+            "These cumulative values describe the shared checkpoint prefix and are excluded "
+            "from branch token_usage.jsonl and branch comparison costs."
+        ),
+    }
+
+
+def build_full_trajectory_rows(
+    prefix_rows: list[dict[str, Any]],
+    continuation_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Create one directly readable prefix-plus-branch trajectory."""
+    rows: list[dict[str, Any]] = []
+    for row in prefix_rows:
+        materialized = copy.deepcopy(row)
+        materialized["sequence_index"] = len(rows)
+        materialized.setdefault("segment_sequence_index", len(rows))
+        materialized["trajectory_segment"] = "checkpoint_prefix"
+        rows.append(materialized)
+    for segment_index, row in enumerate(continuation_rows):
+        materialized = copy.deepcopy(row)
+        materialized["sequence_index"] = len(rows)
+        materialized["segment_sequence_index"] = segment_index
+        materialized["trajectory_segment"] = "branch_continuation"
+        materialized["source_checkpoint_id"] = None
+        rows.append(materialized)
+    return rows
+
+
+def build_controller_summary(
+    *,
+    identity: RunIdentity,
+    enabled: bool,
+    model: str | None,
+    prompt_version: str | None,
+    prompt_hash: str | None,
+    controller_calls: list[dict[str, Any]],
+    runtime_events: list[dict[str, Any]],
+    token_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Build a Controller-only analysis record derived from runtime ledgers."""
+    controller_tokens = usage_summary(token_rows, "controller")
+    action_counts: dict[str, int] = {action: 0 for action in CONTROLLER_ACTIONS}
+    for call in controller_calls:
+        action = call.get("action")
+        if action not in action_counts:
+            raise ValueError(f"unknown Controller action in call ledger: {action!r}")
+        action_counts[action] = action_counts.get(action, 0) + 1
+    costs = [row.get("cost") for row in token_rows if row.get("source") == "controller"]
+    latencies = [
+        call.get("controller_response", {}).get("latency_seconds")
+        for call in controller_calls
+        if isinstance(call.get("controller_response"), dict)
+    ]
+    return identity.to_dict() | {
+        "enabled": enabled,
+        "accounting_scope": "branch_continuation_only",
+        "model": model,
+        "prompt_version": prompt_version,
+        "prompt_hash": prompt_hash,
+        "calls": len(controller_calls),
+        "blocks": sum(1 for call in controller_calls if call.get("blocked")),
+        "fail_open_count": (
+            sum(1 for call in controller_calls if call.get("fail_open"))
+            + sum(1 for event in runtime_events if event.get("event_type") == "controller_fail_open")
+        ),
+        "runtime_event_counts": count_values(runtime_events, "event_type"),
+        "fail_open_by_reason": count_values(
+            [call for call in controller_calls if call.get("fail_open")]
+            + [event for event in runtime_events if event.get("event_type") == "controller_fail_open"],
+            "reason",
+        ),
+        "blocked_guidance_count": sum(
+            1 for call in controller_calls if call.get("blocked") and call.get("guidance")
+        ),
+        "action_counts": action_counts,
+        "tokens": controller_tokens,
+        "cost_cny": nullable_metric_summary(costs),
+        "latency_seconds": nullable_metric_summary(latencies, include_average=True),
+        "controller_calls_path": "controller_calls.jsonl",
+        "controller_runtime_events_path": "controller_runtime_events.jsonl",
+        "token_usage_path": "token_usage.jsonl",
+    }
+
+
 def normalize_evaluator_result(
     *,
     identity: RunIdentity,
@@ -423,6 +675,7 @@ def build_run_manifest(
     appworld_code_version: str | None,
     appworld_data_version: str | None,
     raw_log_hashes: dict[str, str],
+    trajectory_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the complete immutable identity record for one branch."""
     return identity.to_dict() | {
@@ -439,6 +692,7 @@ def build_run_manifest(
         "budget": budget,
         "appworld_code_version": appworld_code_version,
         "appworld_data_version": appworld_data_version,
+        "trajectory": trajectory_summary,
         "required_files": list(RUN_REQUIRED_FILES),
         "raw_log_sha256": raw_log_hashes,
     }
@@ -465,6 +719,36 @@ def branch_result_row(result: dict[str, Any], result_path: Path) -> dict[str, An
         "controller_tokens": result.get("controller_tokens", {}).get("total_tokens"),
         "combined_tokens": result.get("combined_tokens", {}).get("total_tokens"),
         "result_path": str(result_path),
+    }
+
+
+def controller_result_row(summary: dict[str, Any], summary_path: Path) -> dict[str, Any]:
+    """Flatten one Controller summary for root-level analysis."""
+    keys = (
+        "experiment_id",
+        "run_id",
+        "task_id",
+        "checkpoint_id",
+        "branch",
+        "enabled",
+        "model",
+        "prompt_version",
+        "prompt_hash",
+        "calls",
+        "blocks",
+        "fail_open_count",
+        "blocked_guidance_count",
+        "action_counts",
+        "runtime_event_counts",
+        "fail_open_by_reason",
+        "cost_cny",
+        "latency_seconds",
+    )
+    return {key: summary.get(key) for key in keys} | {
+        "input_tokens": summary.get("tokens", {}).get("input_tokens"),
+        "output_tokens": summary.get("tokens", {}).get("output_tokens"),
+        "total_tokens": summary.get("tokens", {}).get("total_tokens"),
+        "summary_path": str(summary_path),
     }
 
 
@@ -561,6 +845,17 @@ def latest_assistant_output(agent: Any) -> str | None:
     return None
 
 
+def latest_assistant_output_from_messages(messages: Any) -> str | None:
+    """Read the latest Assistant output from a persisted message list."""
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages):
+        if isinstance(message, dict) and str(message.get("role", "")).lower() == "assistant":
+            content = message.get("content")
+            return content if isinstance(content, str) else None
+    return None
+
+
 def usage_tokens(usage: Any, kind: str) -> int | None:
     """Read AppWorld token fields without replacing missing values with zero."""
     if usage is None:
@@ -634,6 +929,50 @@ def sum_complete(values: Any) -> int | None:
     if any(value is None for value in materialized):
         return None
     return sum(int(value) for value in materialized)
+
+
+def sum_nullable_numbers(values: Any) -> int | float | None:
+    """Sum numeric values while preserving provider unavailability."""
+    materialized = list(values)
+    if not materialized:
+        return 0
+    if any(value is None for value in materialized):
+        return None
+    return sum(materialized)
+
+
+def average_nullable_numbers(values: Any) -> float | None:
+    """Average numeric values while preserving provider unavailability."""
+    materialized = list(values)
+    if not materialized or any(value is None for value in materialized):
+        return None
+    return sum(float(value) for value in materialized) / len(materialized)
+
+
+def nullable_metric_summary(values: Any, *, include_average: bool = False) -> dict[str, Any]:
+    """Describe nullable per-call metrics without conflating zero and missing."""
+    materialized = list(values)
+    known = [value for value in materialized if value is not None]
+    result: dict[str, Any] = {
+        "total": sum_nullable_numbers(materialized),
+        "known_calls": len(known),
+        "unknown_calls": len(materialized) - len(known),
+    }
+    if include_average:
+        result["average"] = average_nullable_numbers(materialized)
+    return result
+
+
+def count_values(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
+    """Return a stable frequency table for present string values."""
+    counts: dict[str, int] = {}
+    for row in rows:
+        value = row.get(field)
+        if value is None:
+            continue
+        label = str(value)
+        counts[label] = counts.get(label, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _is_complete_task_call(function: ast.expr) -> bool:
