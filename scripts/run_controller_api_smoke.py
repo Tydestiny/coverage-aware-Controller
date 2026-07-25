@@ -409,7 +409,12 @@ def sanitize_messages(value: Any) -> Any:
                 sanitized[key] = sanitize_messages(item)
         return sanitized
     if isinstance(value, str):
-        return re.sub(r"\bsk-[A-Za-z0-9_-]{20,}", "sk-[REDACTED]", value)
+        value = re.sub(r"\bsk-[A-Za-z0-9_-]{20,}", "sk-[REDACTED]", value)
+        return re.sub(
+            r"(?i)(\b(?:password|access_?token|refresh_?token|authorization|api_?key|secret|credential)\b\s*['\"]?\s*(?:=|:|\bis\b)\s*['\"]?)([^'\"\s,}\]]+)",
+            r"\1[REDACTED]",
+            value,
+        )
     return value
 
 

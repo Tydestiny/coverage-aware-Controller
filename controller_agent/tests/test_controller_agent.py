@@ -67,7 +67,7 @@ def test_no_trigger_delegates_without_controller_call() -> None:
 def test_proceed_allows_original_execution() -> None:
     wrapped, logger, adapter = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: {"action": "PROCEED", "reason": "verified", "confidence": 1},
+        lambda _: {"action": "PROCEED", "reason": "verified"},
     )
     result = wrapped.next_execution_inputs_usage_and_status([])
     assert result[0][0].content.endswith("complete_task()")
@@ -78,7 +78,7 @@ def test_proceed_allows_original_execution() -> None:
 def test_block_returns_explicit_interception_result() -> None:
     wrapped, logger, adapter = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: {"action": "VERIFY_TARGET_SET", "reason": "check", "instruction": "Verify IDs.", "confidence": 0.8},
+        lambda _: {"action": "VERIFY_TARGET_SET", "reason": "check", "instruction": "Verify IDs."},
     )
     result = wrapped.next_execution_inputs_usage_and_status([])
     assert isinstance(result, OfflineInterceptionResult)
@@ -93,7 +93,7 @@ def test_block_returns_explicit_interception_result() -> None:
 def test_block_does_not_clear_original_execution_code() -> None:
     wrapped, _, _ = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: {"action": "REPLAN", "reason": "not done", "instruction": "Continue.", "confidence": 0.7},
+        lambda _: {"action": "REPLAN", "reason": "not done", "instruction": "Continue."},
     )
     result = wrapped.next_execution_inputs_usage_and_status([])
     assert isinstance(result, OfflineInterceptionResult)
@@ -124,7 +124,7 @@ def test_trigger_context_fields_are_complete() -> None:
 
 
 def test_legacy_controller_backend_mapping_is_compatible() -> None:
-    response = Controller(lambda _: {"action": "PROCEED", "reason": "legacy", "confidence": 1}).decide(
+    response = Controller(lambda _: {"action": "PROCEED", "reason": "legacy"}).decide(
         _minimal_controller_input()
     )
     assert isinstance(response, ControllerResponse)
@@ -136,7 +136,7 @@ def test_controller_response_usage_is_logged() -> None:
     wrapped, logger, _ = wrap(
         "apis.supervisor.complete_task()",
         lambda _: {
-            "decision": {"action": "PROCEED", "reason": "ok", "confidence": 1},
+            "decision": {"action": "PROCEED", "reason": "ok"},
             "model_name": "mock-controller",
             "input_tokens": 12,
             "output_tokens": 5,
@@ -175,7 +175,7 @@ def test_invalid_json_and_exceptions_fail_open() -> None:
 def test_runtime_state_tracks_calls_blocks_and_limits() -> None:
     wrapped, logger, adapter = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: {"action": "BLOCK_RISKY_ACTION", "reason": "risk", "instruction": "Stop.", "confidence": 0.9},
+        lambda _: {"action": "BLOCK_RISKY_ACTION", "reason": "risk", "instruction": "Stop."},
         config=ControllerConfig(enabled=True, max_controller_calls_per_task=1, max_consecutive_blocks=1),
     )
     first = wrapped.next_execution_inputs_usage_and_status([])
@@ -195,7 +195,7 @@ def test_runtime_state_tracks_calls_blocks_and_limits() -> None:
 def test_unconfigured_adapter_does_not_execute_empty_code() -> None:
     wrapped, _, _ = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: ControllerDecision(Action.BLOCK_RISKY_ACTION, "unsafe", "Do more checks.", 0.9),
+        lambda _: ControllerDecision(Action.BLOCK_RISKY_ACTION, "unsafe", "Do more checks."),
     )
     result = wrapped.next_execution_inputs_usage_and_status([])
     assert isinstance(result, OfflineInterceptionResult)

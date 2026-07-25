@@ -175,7 +175,6 @@ Records:
 - step index
 - trigger metadata
 - action and reason
-- confidence
 - controller usage metadata
 - runtime counters
 - extracted visible state

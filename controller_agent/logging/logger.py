@@ -45,7 +45,6 @@ class ExperimentLogger:
             "action": decision.action.value,
             "reason": decision.reason,
             "instruction": decision.instruction,
-            "confidence": decision.confidence,
             "blocked": blocked,
             "model_name": response.model_name,
             "controller_input_tokens": response.input_tokens,
@@ -60,6 +59,34 @@ class ExperimentLogger:
             "recent_errors": copy.deepcopy(controller_input.recent_errors),
         }
         json.dumps(event)
+        self.events.append(event)
+        if self.sink is not None:
+            self.sink(copy.deepcopy(event))
+
+    def log_runtime_event(
+        self,
+        *,
+        task_id: str,
+        step_index: int,
+        event_type: str,
+        reason: str,
+        trigger: TriggerResult | None,
+        error: str | None,
+        runtime_state: ControllerRuntimeState,
+    ) -> None:
+        """Record a fail-open runtime event without serializing model history."""
+        event = {
+            "event_type": event_type,
+            "task_id": task_id,
+            "step_index": step_index,
+            "reason": reason,
+            "trigger_reason": trigger.reason if trigger is not None else None,
+            "trigger_metadata": copy.deepcopy(trigger.metadata) if trigger is not None else {},
+            "error": error,
+            "total_controller_calls": runtime_state.total_calls,
+            "total_controller_blocks": runtime_state.total_blocks,
+            "consecutive_blocks": runtime_state.consecutive_blocks,
+        }
         self.events.append(event)
         if self.sink is not None:
             self.sink(copy.deepcopy(event))

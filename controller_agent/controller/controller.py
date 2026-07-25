@@ -21,30 +21,36 @@ class Controller:
 
     def __init__(self, backend: Callable[[ControllerInput], Any] | None = None) -> None:
         self.backend = backend
+        self.last_response: ControllerResponse | None = None
 
     def decide(self, controller_input: ControllerInput) -> ControllerResponse:
         """Return a response, failing open to original Agent behavior."""
         if self.backend is None:
-            return ControllerResponse(ControllerDecision(Action.PROCEED, "controller_disabled", confidence=1.0))
+            self.last_response = ControllerResponse(ControllerDecision(Action.PROCEED, "controller_disabled"))
+            return self.last_response
         try:
             response = self.backend(controller_input)
             if isinstance(response, ControllerResponse):
+                self.last_response = response
                 return response
             if isinstance(response, ControllerDecision):
-                return ControllerResponse(response)
+                self.last_response = ControllerResponse(response)
+                return self.last_response
             if isinstance(response, str):
                 response = json.loads(response)
             if not isinstance(response, dict):
                 raise ValueError("Controller backend must return a mapping or JSON object.")
             if "decision" in response:
-                return response_from_mapping(response)
-            return ControllerResponse(decision_from_mapping(response))
+                self.last_response = response_from_mapping(response)
+                return self.last_response
+            self.last_response = ControllerResponse(decision_from_mapping(response))
+            return self.last_response
         except Exception as exc:
-            return ControllerResponse(
+            self.last_response = ControllerResponse(
                 ControllerDecision(
                     Action.PROCEED,
                     "controller_failure_fallback",
                     f"Controller failure; preserve original Agent behavior: {type(exc).__name__}",
-                    0.0,
                 )
             )
+            return self.last_response

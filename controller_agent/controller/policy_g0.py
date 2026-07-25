@@ -121,7 +121,6 @@ class PolicyG0Backend:
                 Action.BLOCK_RISKY_ACTION,
                 "premature_complete_with_excuse_or_goal_sub",
                 _instr("BLOCK_RISKY_ACTION", "complete_before"),
-                0.9,
             )
 
         # Year / attribute-filter cleanups: vague REPLAN hurt online (ce359b5_1).
@@ -135,13 +134,11 @@ class PolicyG0Backend:
                     Action.LOOKUP_API_SPEC,
                     "complete_attribute_filter_needs_detail_api",
                     _instr("LOOKUP_API_SPEC", "attribute_filter_complete"),
-                    0.75,
                 )
             return ControllerDecision(
                 Action.VERIFY_TARGET_SET,
                 "complete_attribute_filter_needs_printed_table",
                 _instr("VERIFY_TARGET_SET", "attribute_filter_complete"),
-                0.8,
             )
 
         if re.search(r"liked|download|library|album|playlist|membership|remove", blob, re.I) and not _SET_EVIDENCE_RE.search(
@@ -151,20 +148,17 @@ class PolicyG0Backend:
                 Action.VERIFY_TARGET_SET,
                 "complete_without_membership_printout",
                 _instr("VERIFY_TARGET_SET", "complete_before"),
-                0.75,
             )
         if errors and not _SUCCESS_RE.search(hist):
             return ControllerDecision(
                 Action.BLOCK_RISKY_ACTION,
                 "complete_while_errors_unresolved",
                 _instr("BLOCK_RISKY_ACTION", "complete_before"),
-                0.8,
             )
         return ControllerDecision(
             Action.REPLAN,
             "complete_before_default_replan",
             _instr("REPLAN", "complete_before"),
-            0.65,
         )
 
     def _write(self, code: str, hist: str, errors: str, task: str = "") -> ControllerDecision:
@@ -178,7 +172,6 @@ class PolicyG0Backend:
                     Action.LOOKUP_API_SPEC,
                     "write_needs_api_or_field_lookup",
                     _instr("LOOKUP_API_SPEC", "write_before"),
-                    0.7,
                 )
 
         # Evidence must appear in prior history, not in the proposed write's comments
@@ -199,7 +192,6 @@ class PolicyG0Backend:
                 Action.VERIFY_TARGET_SET,
                 reason,
                 _instr("VERIFY_TARGET_SET", "membership_cleanup_write"),
-                0.8 if not has_set_evidence else 0.7,
             )
 
         if about_to_write and not has_set_evidence:
@@ -207,7 +199,6 @@ class PolicyG0Backend:
                 Action.BLOCK_RISKY_ACTION,
                 "irreversible_write_without_verified_set",
                 _instr("BLOCK_RISKY_ACTION", "write_before"),
-                0.85,
             )
 
         if about_to_write:
@@ -215,7 +206,6 @@ class PolicyG0Backend:
                 Action.VERIFY_TARGET_SET,
                 "write_before_default_verify",
                 _instr("VERIFY_TARGET_SET", "write_before"),
-                0.7,
             )
 
         return ControllerDecision(Action.PROCEED, "write_trigger_but_no_write_code", "", 0.5)
@@ -228,20 +218,17 @@ class PolicyG0Backend:
                 Action.REPLAN,
                 "error_followed_by_goal_substitution",
                 _instr("REPLAN", "error_after"),
-                0.85,
             )
         if re.search(r"unexpected keyword|not authorized|401|422", errors, re.I):
             return ControllerDecision(
                 Action.LOOKUP_API_SPEC,
                 "api_param_or_auth_error",
                 _instr("LOOKUP_API_SPEC", "error_after"),
-                0.8,
             )
         return ControllerDecision(
             Action.REPLAN,
             "generic_error_recovery",
             _instr("REPLAN", "error_after"),
-            0.6,
         )
 
 

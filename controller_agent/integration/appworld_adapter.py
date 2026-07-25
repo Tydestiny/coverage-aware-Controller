@@ -116,10 +116,18 @@ class ControlledAppWorldRunner:
 
     def run_initialized_world(self, world: Any) -> None:
         """Run one already constructed world without modifying AppWorld source."""
+        self.run_world(world, initialize_agent=True, reset_controller=True)
+
+    def run_restored_world(self, world: Any, *, reset_controller: bool = True) -> None:
+        """Continue a restored world without overwriting restored agent messages."""
+        self.run_world(world, initialize_agent=False, reset_controller=reset_controller)
+
+    def run_world(self, world: Any, *, initialize_agent: bool, reset_controller: bool = True) -> None:
+        """Run the shared controlled loop for a new or restored AppWorld state."""
         task_id = str(getattr(world, "task_id", ""))
-        if hasattr(self.agent, "initialize"):
+        if initialize_agent and hasattr(self.agent, "initialize"):
             self.agent.initialize(world)
-        if hasattr(self.agent, "reset_for_task"):
+        if reset_controller and hasattr(self.agent, "reset_for_task"):
             self.agent.reset_for_task(task_id)
         execution_outputs: Sequence[Any] = []
         while self._should_continue():
@@ -151,6 +159,9 @@ class ControlledAppWorldRunner:
                 continue
             execution_inputs, usage, status = result
             self._record_usage_from_result(task_id, result)
+            self._record_controller_usage(
+                getattr(getattr(self.agent, "last_interception_result", None), "controller_response", None)
+            )
             self._capture_pre_action(
                 task_id=task_id,
                 proposed_execution=self._first_code(execution_inputs),

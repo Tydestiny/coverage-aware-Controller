@@ -25,9 +25,8 @@ class DeterministicSmokeController:
                         "In the next turn you must output an executable Python code block, not natural-language reflection only. "
                         "If verification confirms the task is complete, call apis.supervisor.complete_task(...) again with the answer."
                     ),
-                    1.0,
                 )
             )
         return ControllerResponse(
-            ControllerDecision(Action.PROCEED, "smoke_second_finish_allowed", confidence=1.0)
+            ControllerDecision(Action.PROCEED, "smoke_second_finish_allowed")
         )

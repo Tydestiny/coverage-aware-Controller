@@ -107,6 +107,34 @@ def strip_code_fences(text: str) -> str:
     return match.group(1).strip() if match else text.strip()
 
 
+def parse_response_json(text: str) -> dict[str, Any]:
+    """Parse a JSON object from direct, fenced, or prose-prefixed model text."""
+    candidate = strip_code_fences(text)
+    try:
+        payload = json.loads(candidate)
+    except json.JSONDecodeError as first_error:
+        start = candidate.find("{")
+        if start < 0:
+            raise first_error
+        try:
+            payload, _ = json.JSONDecoder().raw_decode(candidate[start:])
+        except json.JSONDecodeError:
+            raise first_error
+    if not isinstance(payload, dict):
+        raise ValueError("LLM JSON root must be an object.")
+    return payload
+
+
+def remove_confidence_field(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop unsupported confidence fields before parsing or audit logging."""
+    normalized = dict(payload)
+    normalized.pop("confidence", None)
+    decision = normalized.get("decision")
+    if isinstance(decision, dict):
+        normalized["decision"] = {key: value for key, value in decision.items() if key != "confidence"}
+    return normalized
+
+
 class LiveLLMBackend:
     """Prompt-G0 LLM backend for the Coverage-Aware Controller.
 
@@ -115,9 +143,8 @@ class LiveLLMBackend:
         controller = Controller(backend=LiveLLMBackend())
         response = controller.decide(controller_input)
 
-    ``__call__`` returns the model text (JSON). ``Controller`` parses it and
-    fails open to PROCEED on invalid output. Prefer ``decide`` when you want
-    usage metadata attached to ``ControllerResponse``.
+    ``__call__`` returns a parsed ``ControllerResponse`` with usage metadata.
+    The outer ``Controller`` retains ownership of fail-open behavior.
     """
 
     def __init__(
@@ -137,8 +164,12 @@ class LiveLLMBackend:
         self.timeout_seconds = timeout_seconds
         self.call_model_fn = call_model_fn or call_model
 
-    def __call__(self, controller_input: ControllerInput) -> str:
+    def __call__(self, controller_input: ControllerInput) -> ControllerResponse:
         """Match the team sketch: load prompts → call model → return text."""
+        return self.decide(controller_input)
+
+    def decide(self, controller_input: ControllerInput) -> ControllerResponse:
+        """Call the model and wrap a parsed decision with usage metadata."""
         system_prompt = load_g0_system_prompt()
         user_prompt = render_g0_user_prompt(controller_input)
 
@@ -151,7 +182,18 @@ class LiveLLMBackend:
             temperature=self.temperature,
             timeout_seconds=self.timeout_seconds,
         )
-        return strip_code_fences(str(result["text"]))
+        text = strip_code_fences(str(result["text"]))
+        payload = remove_confidence_field(parse_response_json(text))
+        response = response_from_mapping(payload if "decision" in payload else {"decision": payload})
+        return ControllerResponse(
+            decision=response.decision,
+            model_name=str(result.get("model_name") or self.model_name or DEFAULT_MODEL),
+            input_tokens=result.get("input_tokens"),
+            output_tokens=result.get("output_tokens"),
+            latency_seconds=result.get("latency_seconds"),
+            cost_cny=None,
+            raw_response=json.dumps(payload, ensure_ascii=False),
+        )
 
     # def decide(self, controller_input: ControllerInput) -> ControllerResponse:
     #     """Call the model and wrap a parsed decision with usage metadata."""

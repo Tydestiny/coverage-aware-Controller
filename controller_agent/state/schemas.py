@@ -64,7 +64,6 @@ class ControllerDecision:
     action: Action
     reason: str
     instruction: str = ""
-    confidence: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -135,12 +134,9 @@ def decision_from_mapping(value: dict[str, Any]) -> ControllerDecision:
         action = Action(str(value["action"]).upper())
         reason = str(value["reason"])
         instruction = str(value.get("instruction", ""))
-        confidence = float(value.get("confidence", 0.0))
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"Invalid Controller decision: {value!r}") from exc
-    if not 0.0 <= confidence <= 1.0:
-        raise ValueError("Controller confidence must be between 0 and 1.")
-    return ControllerDecision(action, reason, instruction, confidence)
+    return ControllerDecision(action, reason, instruction)
 
 
 def response_from_mapping(value: dict[str, Any]) -> ControllerResponse:

@@ -25,7 +25,8 @@ from controller_agent.state.schemas import (
     TriggerContext,
     TriggerResult,
 )
-from controller_agent.triggers.before_finish import BeforeFinishTrigger
+from controller_agent.triggers.composite import CompositeTriggerDetectorWithBudget
+from controller_agent.triggers.config import TriggerBudgetConfig, TriggerConfig
 
 
 class ControlledReActAgent:
@@ -51,7 +52,9 @@ class ControlledReActAgent:
     ) -> None:
         self.agent = agent
         self.controller = controller or Controller()
-        self.trigger_detector = trigger_detector or BeforeFinishTrigger()
+        # The runtime always dispatches through the composite interface.  The
+        # initial experiment enables only before_finish by configuration.
+        self.trigger_detector = trigger_detector or _before_finish_composite()
         self.state_builder = state_builder or StateBuilder()
         self.guidance_builder = guidance_builder or GuidanceBuilder()
         self.logger = logger or ExperimentLogger()
@@ -86,19 +89,28 @@ class ControlledReActAgent:
         original_execution_inputs: Any,
     ) -> InterceptionResult:
         """Inspect proposed execution and return a runtime-neutral decision."""
-        trigger = self.trigger_detector.detect(context)
+        try:
+            trigger = self.trigger_detector.detect(context)
+        except Exception as exc:
+            self._log_fail_open(context, "trigger_failure", exc)
+            return InterceptionResult(True, original_result, original_execution_inputs)
         if not trigger.should_call_controller:
             return InterceptionResult(True, original_result, original_execution_inputs, trigger_result=None)
         if self._controller_call_limit_reached() or self._consecutive_block_limit_reached():
+            self._log_fail_open(context, "controller_budget_exhausted", None, trigger)
             return InterceptionResult(True, original_result, original_execution_inputs, trigger_result=trigger)
 
-        controller_input = self.state_builder.build(
-            context.task,
-            trigger,
-            context.recent_history,
-            context.proposed_execution,
-        )
-        response = self.controller.decide(controller_input)
+        try:
+            controller_input = self.state_builder.build(
+                context.task,
+                trigger,
+                self._history_before_current_output(),
+                self._latest_assistant_output(context.proposed_execution),
+            )
+            response = self.controller.decide(controller_input)
+        except Exception as exc:
+            self._log_fail_open(context, "controller_or_state_builder_failure", exc, trigger)
+            return InterceptionResult(True, original_result, original_execution_inputs, trigger_result=trigger)
         blocked = response.decision.action != Action.PROCEED
         if blocked and self._controller_block_limit_reached():
             blocked = False
@@ -132,6 +144,10 @@ class ControlledReActAgent:
         self.runtime_state.last_trigger_step = None
         self.runtime_state.last_action = None
         self._current_task_id = task_id
+        reset = getattr(self.trigger_detector, "reset", None)
+        if callable(reset):
+            reset()
+        self.logger.events.clear()
 
     def _build_trigger_context(self, execution_inputs: Sequence[Any], last_execution_outputs: Sequence[Any]) -> TriggerContext:
         """Build trigger context from visible wrapped-agent state."""
@@ -143,6 +159,43 @@ class ControlledReActAgent:
             last_execution_outputs=list(last_execution_outputs),
             recent_history=copy.deepcopy(list(getattr(self.agent, "messages", []))[-12:]),
             runtime_state=self.runtime_state.to_dict(),
+        )
+
+    def _history_before_current_output(self) -> list[dict[str, Any]]:
+        """Return visible history before the just-generated assistant output."""
+        history = copy.deepcopy(list(getattr(self.agent, "messages", [])))
+        for index in range(len(history) - 1, -1, -1):
+            message = history[index]
+            if isinstance(message, dict) and str(message.get("role", "")).lower() == "assistant":
+                del history[index]
+                break
+        return history[-12:]
+
+    def _latest_assistant_output(self, fallback: str) -> str:
+        """Return the complete latest assistant message, falling back to code."""
+        for message in reversed(list(getattr(self.agent, "messages", []))):
+            if isinstance(message, dict) and str(message.get("role", "")).lower() == "assistant":
+                content = message.get("content")
+                if isinstance(content, str) and content:
+                    return content
+        return fallback
+
+    def _log_fail_open(
+        self,
+        context: TriggerContext,
+        reason: str,
+        error: Exception | None,
+        trigger: TriggerResult | None = None,
+    ) -> None:
+        """Record an outer-loop failure without preventing original execution."""
+        self.logger.log_runtime_event(
+            task_id=context.task_id,
+            step_index=context.step_index,
+            event_type="controller_fail_open",
+            reason=reason,
+            trigger=trigger,
+            error=None if error is None else f"{type(error).__name__}: {error}",
+            runtime_state=self.runtime_state,
         )
 
     def _controller_call_limit_reached(self) -> bool:
@@ -194,3 +247,15 @@ class ControlledReActAgent:
     def __getattr__(self, name: str) -> Any:
         """Delegate non-controller attributes to the original Agent."""
         return getattr(self.agent, name)
+
+
+def _before_finish_composite() -> CompositeTriggerDetectorWithBudget:
+    """Create the first-version composite with only before-finish enabled."""
+    config = TriggerConfig(
+        budget=TriggerBudgetConfig(
+            detector_order=("before_finish",),
+            max_triggers_per_task=4,
+            min_before_finish_triggers=1,
+        )
+    )
+    return CompositeTriggerDetectorWithBudget(full_config=config)

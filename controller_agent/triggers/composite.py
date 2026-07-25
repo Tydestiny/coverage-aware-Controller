@@ -48,7 +48,9 @@ def _build_detector_registry(
         # Each detector class accepts a typed subconfig; pass the matching
         # config slice so all overrides from ``TriggerConfig`` propagate.
         if name == "before_finish":
-            instance = cls(config.before_finish)
+            # BeforeFinishTrigger currently owns a fixed public constructor;
+            # it has no configurable state to receive here.
+            instance = cls()
         elif name == "before_write":
             instance = cls(config.before_write)
         elif name == "no_progress":

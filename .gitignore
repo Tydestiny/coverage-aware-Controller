@@ -1,12 +1,60 @@
-__pycache__/
-*.pyc
-.pytest_cache/
+# Controller project source is intentionally kept visible to Git:
+# controller_agent/, scripts/, selected architecture docs, and tests.
+
+# Local Python environments and caches
 .venv/
+.uv-cache/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local secrets and machine-specific configuration
 .env
+.env.*
+!.env.example
+
+# External AppWorld checkout and local dataset material
 appworld/
 appworld_data/
-outputs/
-results/
 data/
 models/
+
+# Runtime trajectories, checkpoints, branch outputs, and reports
+results/
+outputs/
+checkpoints/
+branch_runs/
+trajectories/
+cache/
+logs/
 *.log
+
+# Temporary/debug archive and generated packaging metadata
+scripts/archive/
+*.egg-info/
+build/
+dist/
+
+# Local task allocation files are not controller source or tests
+task_ids/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Keep only core architecture documentation visible when new documentation is
+# generated later. Existing tracked files are unaffected by ignore rules.
+docs/*
+!docs/architecture.md
+!docs/development_contract.md
+!docs/module_dependency_map.md
+!docs/appworld_integration_notes.md
+!docs/runtime_checkpoint_collection.md

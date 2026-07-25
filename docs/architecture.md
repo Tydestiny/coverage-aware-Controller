@@ -50,7 +50,7 @@ The core link has passed a real Agent API smoke test with Qwen Coder Flash on Ap
 - `TriggerResult`: trigger decision, reason, and metadata.
 - `TriggerContext`: task id, step index, task text, proposed execution, last execution outputs, recent history, and runtime counters.
 - `ControllerInput`: task, trigger reason, recent history, current agent output, known entities, completed operations, and recent errors.
-- `ControllerDecision`: action, reason, instruction, and confidence.
+- `ControllerDecision`: action, reason, and instruction.
 - `ControllerResponse`: decision plus optional model name, input/output tokens, latency, cost, and raw response.
 - `ControllerRuntimeState`: total calls, total blocks, consecutive blocks, last trigger step, and last action.
 - `ControllerConfig`: enabled flag, max calls, max consecutive blocks, and fail-open setting.
@@ -70,7 +70,7 @@ The public interfaces are:
 `Controller.decide` is backward compatible with legacy backend mappings such as:
 
 ```json
-{"action": "PROCEED", "reason": "verified", "confidence": 1.0}
+{"action": "PROCEED", "reason": "verified"}
 ```
 
 It wraps those mappings into `ControllerResponse`. Invalid JSON and backend exceptions return a fail-open `PROCEED` response with reason `controller_failure_fallback`.
