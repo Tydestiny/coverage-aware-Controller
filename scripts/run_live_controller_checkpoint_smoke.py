@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -16,7 +18,10 @@ if str(REPO_ROOT) not in sys.path:
 
 from controller_agent.branching.namespace_restore import restore_python_namespace_from_prefix
 from controller_agent.controller.controller import Controller
-from controller_agent.controller.live_llm_backend import LiveLLMBackend
+from controller_agent.controller.live_llm_backend import (
+    DEFAULT_MODEL as CONTROLLER_MODEL_NAME,
+    LiveLLMBackend,
+)
 from controller_agent.integration.appworld_adapter import AppWorldInterceptionApplied, ControlledAppWorldRunner, RunnerBudget
 from controller_agent.integration.controlled_react_agent import ControlledReActAgent
 from controller_agent.logging.logger import ExperimentLogger
@@ -62,9 +67,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-environment-executions", type=int, default=3)
     parser.add_argument("--max-controller-calls", type=int, default=1)
     parser.add_argument("--max-controller-blocks", type=int, default=1)
+    parser.add_argument("--max-extra-agent-turns-after-block", type=int, default=3)
     parser.add_argument("--max-cost-cny", type=float, default=1.0)
     parser.add_argument("--candidate-audit", default=None)
     parser.add_argument("--experiment-name", default="controller_live_checkpoint_smoke")
+    parser.add_argument("--controller-prompt", choices=("g0", "g1"), default="g0")
     return parser.parse_args()
 
 
@@ -74,18 +81,28 @@ def main() -> int:
     appworld_root = Path(args.appworld_root).resolve()
     source_task_dir = Path(args.source_task_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
+    controller_prompt_path = (
+        REPO_ROOT / "controller_agent" / "controller" / "prompts" / f"{args.controller_prompt}_system.txt"
+    )
     checkpoint = load_checkpoint(source_task_dir, args.checkpoint_id)
     config = {
         "task_id": args.task_id,
         "checkpoint_id": args.checkpoint_id,
         "agent_model": "qwen3-coder-flash-2025-07-28",
-        "controller_model": "qwen3-coder-flash-2025-07-28",
+        "controller_model": CONTROLLER_MODEL_NAME,
         "controller_backend": "LiveLLMBackend",
+        "controller_prompt": args.controller_prompt,
+        "controller_prompt_path": str(controller_prompt_path),
+        "controller_prompt_sha256": hashlib.sha256(controller_prompt_path.read_bytes()).hexdigest(),
+        "external_context_redaction": "credentials_email_phone",
+        "private_context_strategy": "local_repl_variables",
+        "candidate_audit": None if args.candidate_audit is None else str(Path(args.candidate_audit).resolve()),
         "max_agent_turns": args.max_agent_turns,
         "max_environment_executions": args.max_environment_executions,
         "max_controller_calls": args.max_controller_calls,
         "max_controller_blocks": args.max_controller_blocks,
         "max_consecutive_blocks": args.max_controller_blocks,
+        "max_extra_agent_turns_after_block": args.max_extra_agent_turns_after_block,
         "max_cost_cny": args.max_cost_cny,
         "api_endpoint": API_ENDPOINT,
         "source_checkpoint": str(source_task_dir / "checkpoints" / "post_observation" / f"{args.checkpoint_id}.json"),
@@ -109,13 +126,18 @@ def main() -> int:
     agent_args = argparse.Namespace(
         max_cost_cny=args.max_cost_cny,
         max_agent_turns=args.max_agent_turns,
-        max_extra_agent_turns_after_block=3,
+        max_extra_agent_turns_after_block=args.max_extra_agent_turns_after_block,
     )
     agent_config = build_agent_config(agent_args, appworld_root)
     agent_config["log_lm_calls"] = False
     base_agent = Agent.from_dict(agent_config)
     logger = ExperimentLogger()
-    controller = Controller(backend=LiveLLMBackend())
+    controller = Controller(
+        backend=LiveLLMBackend(
+            model_name=CONTROLLER_MODEL_NAME,
+            system_prompt_path=controller_prompt_path,
+        )
+    )
     controlled = ControlledReActAgent(
         base_agent,
         controller=controller,
@@ -134,7 +156,7 @@ def main() -> int:
             max_environment_executions=args.max_environment_executions,
             max_controller_calls=args.max_controller_calls,
             max_controller_blocks=args.max_controller_blocks,
-            max_extra_agent_turns_after_block=3,
+            max_extra_agent_turns_after_block=args.max_extra_agent_turns_after_block,
             max_cost_cny=args.max_cost_cny,
         ),
     )
@@ -162,7 +184,16 @@ def main() -> int:
                 if not namespace_result.success:
                     raise RuntimeError(namespace_result.error or "namespace restore failed")
                 world.load_state(str(checkpoint["appworld_state_id"]))
-                base_agent.messages = checkpoint["agent_messages"]
+                # AppWorld.load_state() closes the world's original time
+                # freezer but does not install a replacement.  Recreate the
+                # normal initialized-world state so evaluation and context
+                # cleanup do not stop the same freezer twice.
+                world._set_datetime()
+                private_context = _install_private_context_variables(world, checkpoint)
+                base_agent.messages = redact_external_context(
+                    checkpoint["agent_messages"],
+                    private_context=private_context,
+                )
                 base_agent.step_number = int(checkpoint["agent_turn_index"])
                 if args.candidate_audit:
                     _run_cached_pre_action(
@@ -171,6 +202,7 @@ def main() -> int:
                         runner,
                         world,
                         ExecutionIO,
+                        private_context,
                     )
                 else:
                     runner.run_restored_world(world)
@@ -248,6 +280,7 @@ def _run_cached_pre_action(
     runner: ControlledAppWorldRunner,
     world: Any,
     execution_io_type: type[Any],
+    private_context: dict[str, str],
 ) -> None:
     """Run a previously generated real Agent pre-action through the live Controller.
 
@@ -256,17 +289,29 @@ def _run_cached_pre_action(
     deterministic; the continuation after a block still calls the real Agent.
     """
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
-    output = str(audit["controller_input"]["current_agent_output"])
+    output = _candidate_agent_output(audit)
     code = _first_python_block(output)
     if not code:
         raise ValueError("candidate audit has no executable Python code block")
     base_agent = controlled.agent
-    base_agent.messages.append({"role": "assistant", "content": output})
-    base_agent.step_number = int(getattr(base_agent, "step_number", 0)) + 1
+    audit_messages = audit.get("messages")
+    if isinstance(audit_messages, list) and audit_messages:
+        base_agent.messages = redact_external_context(
+            audit_messages,
+            private_context=private_context,
+        )
+    else:
+        base_agent.messages.append({"role": "assistant", "content": output})
+    base_agent.step_number = int(
+        audit.get("agent_turn_index", int(getattr(base_agent, "step_number", 0)) + 1)
+    )
     controlled.reset_for_task(str(getattr(world, "task_id", "")))
     controlled.runtime_state.agent_turn_count = 1
     execution_inputs = [execution_io_type(content=code, metadata={})]
-    context = controlled._build_trigger_context(execution_inputs, [])
+    context = controlled._build_trigger_context(
+        execution_inputs,
+        list(audit.get("last_execution_outputs", [])),
+    )
     interception = controlled.inspect_proposed_execution(context, original_result=None, original_execution_inputs=execution_inputs)
     controlled.last_interception_result = interception
     applied = controlled.integration_adapter.apply(None, interception, base_agent)
@@ -288,12 +333,98 @@ def _run_cached_pre_action(
         runner.run_restored_world(world, reset_controller=False)
 
 
+def _candidate_agent_output(audit: dict[str, Any]) -> str:
+    """Read either an older Controller audit or a runtime pre-action record."""
+    controller_input = audit.get("controller_input")
+    if isinstance(controller_input, dict):
+        output = controller_input.get("current_agent_output")
+        if isinstance(output, str) and output.strip():
+            return output
+    proposed_execution = audit.get("proposed_execution")
+    if isinstance(proposed_execution, str) and proposed_execution.strip():
+        return f"```python\n{proposed_execution.strip()}\n```\n"
+    raise ValueError("candidate audit has no Agent output or proposed execution")
+
+
 def _first_python_block(output: str) -> str:
     """Extract one executable block from a captured assistant output."""
-    import re
-
     match = re.search(r"```(?:python|py)?\s*\n(.*?)```", output, flags=re.IGNORECASE | re.DOTALL)
     return match.group(1).strip() if match else ""
+
+
+def redact_external_context(
+    value: Any,
+    *,
+    private_context: dict[str, str] | None = None,
+) -> Any:
+    """Remove credentials and direct profile identifiers before model calls."""
+    aliased = _replace_private_context_with_variables(value, private_context or {})
+    return _redact_profile_identifiers(sanitize_messages(aliased))
+
+
+def _install_private_context_variables(world: Any, checkpoint: dict[str, Any]) -> dict[str, str]:
+    """Keep private task fields local while exposing safe REPL variable names."""
+    messages = checkpoint.get("agent_messages", [])
+    task_text = "\n".join(
+        str(message.get("content", ""))
+        for message in messages
+        if isinstance(message, dict) and message.get("role") == "user" and "Task:" in str(message.get("content", ""))
+    )
+    private_context: dict[str, str] = {}
+    email_match = re.search(
+        r"personal email is:?\s*([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})",
+        task_text,
+        flags=re.IGNORECASE,
+    )
+    phone_match = re.search(
+        r"phone number is\s*([0-9]{9,15})",
+        task_text,
+        flags=re.IGNORECASE,
+    )
+    user_namespace = getattr(getattr(world, "shell", None), "user_ns", None)
+    if not isinstance(user_namespace, dict):
+        return private_context
+    if email_match:
+        private_context["supervisor_email"] = email_match.group(1)
+        user_namespace["supervisor_email"] = email_match.group(1)
+    if phone_match:
+        private_context["supervisor_phone"] = phone_match.group(1)
+        user_namespace["supervisor_phone"] = phone_match.group(1)
+    return private_context
+
+
+def _replace_private_context_with_variables(value: Any, private_context: dict[str, str]) -> Any:
+    """Replace local private values with executable variable references."""
+    if isinstance(value, list):
+        return [_replace_private_context_with_variables(item, private_context) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _replace_private_context_with_variables(item, private_context)
+            for key, item in value.items()
+        }
+    if isinstance(value, str):
+        for variable_name, private_value in private_context.items():
+            escaped = re.escape(private_value)
+            value = re.sub(rf"(['\"]){escaped}\1", variable_name, value)
+            value = re.sub(escaped, variable_name, value)
+        return value
+    return value
+
+
+def _redact_profile_identifiers(value: Any) -> Any:
+    """Recursively remove email addresses and phone-number-like values."""
+    if isinstance(value, list):
+        return [_redact_profile_identifiers(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _redact_profile_identifiers(item) for key, item in value.items()}
+    if isinstance(value, str):
+        value = re.sub(
+            r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+            "<redacted-email>",
+            value,
+        )
+        return re.sub(r"(?<!\d)\d{9,15}(?!\d)", "<redacted-phone>", value)
+    return value
 
 
 if __name__ == "__main__":

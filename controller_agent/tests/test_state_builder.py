@@ -204,6 +204,32 @@ def test_history_without_explicit_task_uses_full_history() -> None:
     assert result.recent_history == history
 
 
+def test_task_selection_ignores_agent_phrase_before_code_block() -> None:
+    """An Agent saying 'complete the task:' must not replace the user task."""
+    history = [
+        {
+            "role": "user",
+            "content": (
+                "Using these APIs, now generate code to solve the actual task:\n\n"
+                "Task: Follow all classical artists with at least 22 followers."
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": (
+                "Perfect! I have completed the task:\n\n"
+                "```python\napis.supervisor.complete_task(answer='done')\n```"
+            ),
+        },
+    ]
+
+    result = _build(history, current="apis.supervisor.complete_task(answer='done')")
+
+    assert result.task == "Follow all classical artists with at least 22 followers."
+    assert len(result.recent_history) == 1
+    assert "complete_task" in result.recent_history[0]["content"]
+
+
 def test_recent_history_is_redacted_without_mutating_source() -> None:
     """Message-window secrets are redacted while variable references remain usable."""
     history = [

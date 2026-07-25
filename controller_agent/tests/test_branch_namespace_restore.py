@@ -116,21 +116,21 @@ def test_rebuild_python_namespace_reports_invalid_prefix() -> None:
     assert "executed_code_prefix" in str(result.error)
 
 
-def test_rebuild_python_namespace_reports_execution_failure() -> None:
-    """Replay stops before branch execution when a prefix cell fails."""
+def test_rebuild_python_namespace_continues_after_recorded_cell_failure() -> None:
+    """A failed historical cell does not hide state created by later cells."""
     world = FakeWorld()
-    world.outputs = ["ok", "Execution failed. Traceback:\nNameError: missing"]
+    world.outputs = ["ok", "Execution failed. Traceback:\nNameError: missing", "recovered"]
     checkpoint = {
         "namespace_restore_mode": "replay_required",
-        "executed_code_prefix": ["x = 1", "y = missing"],
+        "executed_code_prefix": ["x = 1", "y = missing", "y = 2"],
     }
 
     result = restore_python_namespace_from_prefix(world, checkpoint)
 
-    assert result.success is False
-    assert result.steps == 2
-    assert "executed_code_prefix[1]" in str(result.error)
-    assert world.executed == ["x = 1", "y = missing"]
+    assert result.success is True
+    assert result.steps == 3
+    assert result.error is None
+    assert world.executed == ["x = 1", "y = missing", "y = 2"]
     assert world.environment_io == []
 
 

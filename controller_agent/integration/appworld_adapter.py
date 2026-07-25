@@ -219,6 +219,7 @@ class ControlledAppWorldRunner:
             self.turn_events.append(
                 self._executed_event(result, execution_inputs, world, task_completed, turn_start)
             )
+            self.turn_events[-1]["execution_outputs"] = self._outputs_content(execution_outputs)
             if task_completed:
                 self.stop_reason = "task_completed"
                 self.turn_events[-1]["termination_reason"] = self.stop_reason

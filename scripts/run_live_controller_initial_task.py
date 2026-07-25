@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -15,7 +16,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from controller_agent.controller.controller import Controller
-from controller_agent.controller.live_llm_backend import LiveLLMBackend
+from controller_agent.controller.live_llm_backend import (
+    DEFAULT_MODEL as CONTROLLER_MODEL_NAME,
+    LiveLLMBackend,
+)
 from controller_agent.integration.appworld_adapter import ControlledAppWorldRunner, RunnerBudget
 from controller_agent.integration.controlled_react_agent import ControlledReActAgent
 from controller_agent.logging.logger import ExperimentLogger
@@ -46,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-controller-calls", type=int, default=2)
     parser.add_argument("--max-controller-blocks", type=int, default=2)
     parser.add_argument("--max-cost-cny", type=float, default=float("inf"))
+    parser.add_argument("--controller-prompt", choices=("g0", "g1"), default="g0")
     return parser.parse_args()
 
 
@@ -54,6 +59,9 @@ def main() -> int:
     args = parse_args()
     appworld_root = Path(args.appworld_root).resolve()
     output_dir = Path(args.output_dir).resolve()
+    controller_prompt_path = (
+        REPO_ROOT / "controller_agent" / "controller" / "prompts" / f"{args.controller_prompt}_system.txt"
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
     selection = {
         "dataset_name": args.dataset_name,
@@ -74,8 +82,11 @@ def main() -> int:
         "experiment_name": args.experiment_name,
         "agent_name": AGENT_NAME,
         "agent_model": MODEL_NAME,
-        "controller_model": MODEL_NAME,
+        "controller_model": CONTROLLER_MODEL_NAME,
         "controller_backend": "LiveLLMBackend",
+        "controller_prompt": args.controller_prompt,
+        "controller_prompt_path": str(controller_prompt_path),
+        "controller_prompt_sha256": hashlib.sha256(controller_prompt_path.read_bytes()).hexdigest(),
         "context_policy": "FULL_CONTEXT",
         "enabled_triggers": ["before_finish"],
         "max_agent_turns": args.max_agent_turns,
@@ -113,7 +124,12 @@ def main() -> int:
         base_agent = Agent.from_dict(agent_config)
         controlled = ControlledReActAgent(
             base_agent,
-            controller=Controller(backend=LiveLLMBackend()),
+            controller=Controller(
+                backend=LiveLLMBackend(
+                    model_name=CONTROLLER_MODEL_NAME,
+                    system_prompt_path=controller_prompt_path,
+                )
+            ),
             config=ControllerConfig(
                 enabled=True,
                 max_controller_calls_per_task=args.max_controller_calls,

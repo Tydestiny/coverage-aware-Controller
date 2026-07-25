@@ -21,7 +21,14 @@ class NamespaceRestoreResult:
 
 
 def restore_python_namespace_from_prefix(world: Any, checkpoint: dict[str, Any]) -> NamespaceRestoreResult:
-    """Replay saved execution code to rebuild AppWorld REPL globals before state load."""
+    """Replay saved execution code to rebuild AppWorld REPL globals before state load.
+
+    An AppWorld cell may fail after assigning some variables, and later cells in
+    the recorded trajectory may recover from that failure.  Such an output is
+    part of the original REPL history, not a restore-infrastructure failure, so
+    replay must continue through it.  Exceptions raised by ``world.execute``
+    itself still fail the restore.
+    """
     mode = str(checkpoint.get("namespace_restore_mode", "replay_required"))
     if mode != "replay_required":
         return NamespaceRestoreResult(success=True, mode=mode, steps=0)
@@ -54,13 +61,6 @@ def restore_python_namespace_from_prefix(world: Any, checkpoint: dict[str, Any])
                 )
             output = str(world.execute(code))
             steps += 1
-            if output.lstrip().startswith("Execution failed."):
-                return NamespaceRestoreResult(
-                    success=False,
-                    mode=mode,
-                    steps=steps,
-                    error=f"Replay failed at executed_code_prefix[{index}]: {first_line(output)}",
-                )
     except Exception as exc:
         return NamespaceRestoreResult(
             success=False,

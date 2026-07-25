@@ -121,7 +121,13 @@ def _select_current_task(history: list[dict[str, str]]) -> tuple[str | None, int
     selected_task: str | None = None
     selected_index: int | None = None
     for index, message in enumerate(history):
-        matches = re.finditer(r"\btask\s*:\s*([^\r\n]+)", message["content"], flags=re.IGNORECASE)
+        if message["role"].lower() != "user":
+            continue
+        matches = re.finditer(
+            r"^[ \t]*task[ \t]*:[ \t]*(\S[^\r\n]*)$",
+            message["content"],
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
         for match in matches:
             candidate = match.group(1).strip()
             if candidate:

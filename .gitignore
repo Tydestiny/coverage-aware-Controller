@@ -58,3 +58,5 @@ docs/*
 !docs/module_dependency_map.md
 !docs/appworld_integration_notes.md
 !docs/runtime_checkpoint_collection.md
+!docs/controller_prompt_g1.md
+!docs/controller_g0_g1_real_trajectory_analysis.md

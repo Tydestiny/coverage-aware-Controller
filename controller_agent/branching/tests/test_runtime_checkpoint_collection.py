@@ -195,7 +195,8 @@ def test_post_observation_marks_replay_required_namespace(tmp_path: Path) -> Non
 
     runner.run_initialized_world(world)
 
-    first_post = read_json(next((tmp_path / "run-1" / "scripted-task" / "post_observation").glob("*.json")))
+    first_post_path = sorted((tmp_path / "run-1" / "scripted-task" / "post_observation").glob("*.json"))[0]
+    first_post = read_json(first_post_path)
     assert first_post["namespace_restore_mode"] == "replay_required"
     assert first_post["executed_code_prefix"] == ["print('query current state')"]
 

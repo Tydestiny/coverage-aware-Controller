@@ -277,7 +277,7 @@ def print_run_config(config: dict[str, Any]) -> None:
 
 
 def load_dotenv(path: Path) -> None:
-    """Load simple KEY=VALUE lines without printing secrets."""
+    """Load simple KEY=VALUE lines and configure the OpenAI-compatible client."""
     if not path.exists():
         return
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -286,6 +286,12 @@ def load_dotenv(path: Path) -> None:
             continue
         key, value = stripped.split("=", 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+    dashscope_key = os.environ.get("DASHSCOPE_API_KEY")
+    if dashscope_key:
+        # AppWorld inspects an OpenAI client signature before applying its
+        # configured api_key_env_name.  The same DashScope credential must be
+        # visible under this compatibility name during client construction.
+        os.environ.setdefault("OPENAI_API_KEY", dashscope_key)
 
 
 def read_text_if_exists(path: Path) -> str | None:
@@ -411,11 +417,30 @@ def sanitize_messages(value: Any) -> Any:
     if isinstance(value, str):
         value = re.sub(r"\bsk-[A-Za-z0-9_-]{20,}", "sk-[REDACTED]", value)
         return re.sub(
-            r"(?i)(\b(?:password|access_?token|refresh_?token|authorization|api_?key|secret|credential)\b\s*['\"]?\s*(?:=|:|\bis\b)\s*['\"]?)([^'\"\s,}\]]+)",
-            r"\1[REDACTED]",
+            r"(?i)(\b(?:password|access_?token|refresh_?token|authorization|api_?key|secret|credential)\b\s*['\"]?\s*(?:=|:|\bis\b)\s*)(['\"]?)([^'\"\s,}\]);]+)",
+            _redact_credential_value,
             value,
         )
     return value
+
+
+def _redact_credential_value(match: re.Match[str]) -> str:
+    """Redact literal credentials while preserving executable variable references."""
+    prefix, quote, candidate = match.groups()
+    lowered = candidate.lower()
+    safe_variable = bool(
+        not quote
+        and (
+            re.fullmatch(
+                r"[a-z_][a-z0-9_]*(?:password|access_?token|refresh_?token|authorization|api_?key|secret|credential)",
+                lowered,
+            )
+            or lowered.startswith(("login_result[", "account[", "passwords[", "credentials["))
+        )
+    )
+    if safe_variable:
+        return match.group(0)
+    return f"{prefix}{quote}[REDACTED]"
 
 
 def with_wall_total(event: dict[str, Any], total_wall_time: float) -> dict[str, Any]:

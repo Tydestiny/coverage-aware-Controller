@@ -13,6 +13,8 @@ Current implementations:
 - `DeterministicSmokeController`: model-free smoke controller for integration tests only.
 - `PolicyG0Backend` (`policy_g0.py`): deterministic policy from Part3 branch experiments (local).
 - Prompt G0 templates under `prompts/` (`g0_system.txt`, `g0_user_template.txt`, `instruction_templates.json`).
+- Prompt G1 under `prompts/g1_system.txt`: diagnosis-first before-finish policy with self-contained minimal guidance.
+- `LiveLLMBackend(system_prompt_path=...)`: selects G0 by default or another compatible fixed prompt such as G1.
 
 Usage (local only; do not push unless intentional):
 
@@ -21,6 +23,18 @@ from controller_agent.controller.controller import Controller
 from controller_agent.controller.policy_g0 import PolicyG0Backend
 
 controller = Controller(backend=PolicyG0Backend())
+```
+
+Prompt G1:
+
+```python
+from pathlib import Path
+
+from controller_agent.controller.controller import Controller
+from controller_agent.controller.live_llm_backend import LiveLLMBackend
+
+prompt = Path("controller_agent/controller/prompts/g1_system.txt")
+controller = Controller(backend=LiveLLMBackend(system_prompt_path=prompt))
 ```
 
 Extension rules:

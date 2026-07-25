@@ -1,4 +1,4 @@
-"""Live LLM Controller backend using Prompt G0.
+"""Live LLM Controller backend using a selectable fixed prompt.
 
 Calls an OpenAI-compatible chat API (e.g. DashScope) and returns model text
 that `Controller` can parse into a validated `ControllerResponse`.
@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from controller_agent.controller.policy_g0 import load_g0_system_prompt, render_g0_user_prompt
@@ -21,6 +22,7 @@ from controller_agent.state.schemas import ControllerInput, ControllerResponse, 
 
 DEFAULT_MODEL = "qwen3-coder-flash-2025-07-28"
 DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+DEFAULT_SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "g0_system.txt"
 _FENCE_RE = re.compile(r"^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$", re.I)
 
 
@@ -136,7 +138,7 @@ def remove_confidence_field(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class LiveLLMBackend:
-    """Prompt-G0 LLM backend for the Coverage-Aware Controller.
+    """Fixed-prompt LLM backend for the Coverage-Aware Controller.
 
     Typical use::
 
@@ -155,6 +157,7 @@ class LiveLLMBackend:
         api_key: str | None = None,
         temperature: float = 0.0,
         timeout_seconds: float = 60.0,
+        system_prompt_path: str | Path | None = None,
         call_model_fn: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self.model_name = model_name
@@ -162,6 +165,11 @@ class LiveLLMBackend:
         self.api_key = api_key
         self.temperature = temperature
         self.timeout_seconds = timeout_seconds
+        self.system_prompt_path = (
+            DEFAULT_SYSTEM_PROMPT_PATH
+            if system_prompt_path is None
+            else Path(system_prompt_path)
+        )
         self.call_model_fn = call_model_fn or call_model
 
     def __call__(self, controller_input: ControllerInput) -> ControllerResponse:
@@ -170,7 +178,7 @@ class LiveLLMBackend:
 
     def decide(self, controller_input: ControllerInput) -> ControllerResponse:
         """Call the model and wrap a parsed decision with usage metadata."""
-        system_prompt = load_g0_system_prompt()
+        system_prompt = self._load_system_prompt()
         user_prompt = render_g0_user_prompt(controller_input)
 
         result = self.call_model_fn(
@@ -192,40 +200,14 @@ class LiveLLMBackend:
             output_tokens=result.get("output_tokens"),
             latency_seconds=result.get("latency_seconds"),
             cost_cny=None,
-            raw_response=json.dumps(payload, ensure_ascii=False),
+            raw_response=json.dumps(result.get("raw"), ensure_ascii=False) if result.get("raw") is not None else None,
         )
 
-    # def decide(self, controller_input: ControllerInput) -> ControllerResponse:
-    #     """Call the model and wrap a parsed decision with usage metadata."""
-    #     system_prompt = load_g0_system_prompt()
-    #     user_prompt = render_g0_user_prompt(controller_input)
-
-    #     result = self.call_model_fn(
-    #         system_prompt=system_prompt,
-    #         user_prompt=user_prompt,
-    #         model=self.model_name,
-    #         base_url=self.base_url,
-    #         api_key=self.api_key,
-    #         temperature=self.temperature,
-    #         timeout_seconds=self.timeout_seconds,
-    #     )
-    #     text = strip_code_fences(str(result["text"]))
-    #     payload = json.loads(text)
-    #     if not isinstance(payload, dict):
-    #         raise ValueError("LLM JSON root must be an object.")
-    #     if "decision" in payload:
-    #         response = response_from_mapping(payload)
-    #     else:
-    #         response = response_from_mapping({"decision": payload})
-    #     return ControllerResponse(
-    #         decision=response.decision,
-    #         model_name=str(result.get("model_name") or self.model_name or DEFAULT_MODEL),
-    #         input_tokens=result.get("input_tokens"),
-    #         output_tokens=result.get("output_tokens"),
-    #         latency_seconds=result.get("latency_seconds"),
-    #         cost_cny=None,
-    #         raw_response=text,
-    #     )
+    def _load_system_prompt(self) -> str:
+        """Load the configured prompt while preserving the historical G0 default."""
+        if self.system_prompt_path == DEFAULT_SYSTEM_PROMPT_PATH:
+            return load_g0_system_prompt()
+        return self.system_prompt_path.read_text(encoding="utf-8")
 
 
 # Alias used in the team work plan naming.
