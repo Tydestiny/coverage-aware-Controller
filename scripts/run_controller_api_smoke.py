@@ -26,6 +26,10 @@ from controller_agent.state.schemas import ControllerConfig
 MODEL_NAME = "qwen3-coder-flash-2025-07-28"
 AGENT_NAME = "simplified_react_code_agent"
 API_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+OPENAI_GPT4O_MINI = "gpt-4o-mini-2024-07-18"
+OPENAI_ENDPOINT = "https://api.openai.com/v1"
+DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
+DEEPSEEK_V4_FLASH_ENDPOINT = "https://llm-u8xw1rrtzqaiduhz.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 
 
 def main() -> int:
@@ -185,30 +189,16 @@ def ensure_appworld_imports() -> None:
         raise RuntimeError("Run this script with the AppWorld .venv Python or uv environment.") from exc
 
 
-def build_agent_config(args: argparse.Namespace, appworld_root: Path) -> dict[str, Any]:
+def build_agent_config(
+    args: argparse.Namespace,
+    appworld_root: Path,
+    agent_model: str = MODEL_NAME,
+) -> dict[str, Any]:
     """Build the AppWorld simplified ReAct agent config."""
+    model_config = build_agent_model_config(agent_model)
     return {
         "type": AGENT_NAME,
-        "model_config": {
-            "client_name": "openai",
-            "api_type": "chat_completions",
-            "base_url": API_ENDPOINT,
-            "api_key_env_name": "DASHSCOPE_API_KEY",
-            "name": MODEL_NAME,
-            "temperature": 0.0,
-            "seed": 100,
-            "max_completion_tokens": 65536,
-            "drop_reasoning_content": False,
-            "cost_per_token": {
-                "input_cache_hit": 1.44e-07,
-                "input_cache_miss": 1.44e-07,
-                "input_cache_write": 0.0,
-                "output": 5.74e-07,
-            },
-            "retry_after_n_seconds": 15,
-            "use_cache": False,
-            "max_retries": 1,
-        },
+        "model_config": model_config,
         "appworld_config": {
             "random_seed": 100,
             "raise_on_extra_parameters": True,
@@ -229,6 +219,74 @@ def build_agent_config(args: argparse.Namespace, appworld_root: Path) -> dict[st
         "max_steps": None,
         "log_lm_calls": True,
         "skip_if_finished": False,
+    }
+
+
+def build_agent_model_config(agent_model: str) -> dict[str, Any]:
+    """Return the fixed provider configuration for a supported Agent model."""
+    if agent_model in {"openai/gpt-4o-mini", OPENAI_GPT4O_MINI}:
+        return {
+            "client_name": "openai",
+            "api_type": "chat_completions",
+            "base_url": OPENAI_ENDPOINT,
+            "api_key_env_name": "OPENAI_API_KEY",
+            "name": OPENAI_GPT4O_MINI,
+            "temperature": 0.0,
+            "seed": 100,
+            "drop_reasoning_content": False,
+            "cost_per_token": {
+                "input_cache_hit": 7.5e-08,
+                "input_cache_miss": 1.5e-07,
+                "input_cache_write": 0.0,
+                "output": 6e-07,
+            },
+            "retry_after_n_seconds": 15,
+            "use_cache": False,
+            "max_retries": 1,
+        }
+    if agent_model == DEEPSEEK_V4_FLASH:
+        return {
+            "client_name": "openai",
+            "api_type": "chat_completions",
+            "base_url": DEEPSEEK_V4_FLASH_ENDPOINT,
+            "api_key_env_name": "DASHSCOPE_API_KEY",
+            "name": DEEPSEEK_V4_FLASH,
+            "temperature": 0.0,
+            "seed": 100,
+            # DashScope maps the OpenAI-compatible value "none" to
+            # enable_thinking=false for DeepSeek-V4 hybrid-thinking models.
+            "drop_reasoning_content": True,
+            "cost_per_token": {
+                "input_cache_hit": 1e-07,
+                "input_cache_miss": 1e-06,
+                "input_cache_write": 0.0,
+                "output": 2e-06,
+            },
+            "retry_after_n_seconds": 15,
+            "use_cache": False,
+            "max_retries": 1,
+        }
+    if agent_model != MODEL_NAME:
+        raise ValueError(f"Unsupported Agent model: {agent_model}")
+    return {
+        "client_name": "openai",
+        "api_type": "chat_completions",
+        "base_url": API_ENDPOINT,
+        "api_key_env_name": "DASHSCOPE_API_KEY",
+        "name": MODEL_NAME,
+        "temperature": 0.0,
+        "seed": 100,
+        "max_completion_tokens": 65536,
+        "drop_reasoning_content": False,
+        "cost_per_token": {
+            "input_cache_hit": 1.44e-07,
+            "input_cache_miss": 1.44e-07,
+            "input_cache_write": 0.0,
+            "output": 5.74e-07,
+        },
+        "retry_after_n_seconds": 15,
+        "use_cache": False,
+        "max_retries": 1,
     }
 
 

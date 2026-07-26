@@ -14,6 +14,7 @@ class NamespaceRestoreResult:
     mode: str
     steps: int
     error: str | None = None
+    replay_warnings: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable result dictionary."""
@@ -43,6 +44,7 @@ def restore_python_namespace_from_prefix(world: Any, checkpoint: dict[str, Any])
         )
 
     steps = 0
+    replay_warnings: list[str] = []
     try:
         for index, code in enumerate(prefix):
             if not isinstance(code, str) or not code.strip():
@@ -55,11 +57,12 @@ def restore_python_namespace_from_prefix(world: Any, checkpoint: dict[str, Any])
             output = str(world.execute(code))
             steps += 1
             if output.lstrip().startswith("Execution failed."):
-                return NamespaceRestoreResult(
-                    success=False,
-                    mode=mode,
-                    steps=steps,
-                    error=f"Replay failed at executed_code_prefix[{index}]: {first_line(output)}",
+                # Original trajectories can contain a failed attempt followed by a
+                # retry that creates the variables required at the checkpoint.
+                # Continue rebuilding the namespace; world.load_state() later
+                # discards every replay-time environment mutation.
+                replay_warnings.append(
+                    f"executed_code_prefix[{index}]: {first_line(output)}"
                 )
     except Exception as exc:
         return NamespaceRestoreResult(
@@ -71,7 +74,12 @@ def restore_python_namespace_from_prefix(world: Any, checkpoint: dict[str, Any])
     finally:
         reset_world_interaction_logs(world)
 
-    return NamespaceRestoreResult(success=True, mode=mode, steps=steps)
+    return NamespaceRestoreResult(
+        success=True,
+        mode=mode,
+        steps=steps,
+        replay_warnings=tuple(replay_warnings),
+    )
 
 
 def reset_world_interaction_logs(world: Any) -> None:

@@ -67,6 +67,42 @@ python -m pytest
 
 No real AppWorld task or model API call is launched by the unit tests.
 
+## Controller Prompt Optimization
+
+The optimizer consumes existing branching results only; it does not run AppWorld,
+modify the active Controller prompt, or accept a candidate automatically.
+
+Dry-run from CMD:
+
+```cmd
+python scripts\optimize_controller_prompt.py ^
+  --experiment-root results\branching_experiment\checkpoint_dual_smoke_20260725 ^
+  --current-prompt controller_agent\controller\prompts\g0_system.txt ^
+  --output-dir results\prompt_optimization\dry_run ^
+  --dry-run
+```
+
+After setting `OPENROUTER_API_KEY` in `.env`, make one optimizer call with the
+same command and without `--dry-run`. Review the generated candidate on held-out
+checkpoints before any manual adoption.
+
+## Oracle Instruction Branch Collection
+
+To collect baseline, Controller, and one externally injected oracle-instruction
+branch for each annotated post-observation checkpoint:
+
+```cmd
+python scripts\collect_oracle_instruction_branches.py ^
+  --input oracle_instruction.jsonl ^
+  --experiment-id oracle_instruction_batch_v1 ^
+  --branches baseline,controller,oracle_instruction ^
+  --execute
+```
+
+Use `--resume` to skip branches with a completed official evaluator outcome.
+Each branch is restored in a separate AppWorld output namespace and written under
+`results\branching_experiment\<experiment_id>\`.
+
 ## Trajectory Collection
 
 Each member can run one task-id part file. The model and Agent configuration are

@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
+from controller_agent.integration.dashscope_no_thinking import install_deepseek_no_thinking_adapter
 from controller_agent.branching.namespace_restore import reset_world_interaction_logs, restore_python_namespace_from_prefix
 from controller_agent.controller.controller import Controller
 from controller_agent.controller.live_llm_backend import LiveLLMBackend
@@ -31,6 +32,8 @@ from scripts.run_checkpoint_restore_continue import (
 )
 from scripts.run_controller_api_smoke import (
     API_ENDPOINT,
+    OPENAI_GPT4O_MINI,
+    DEEPSEEK_V4_FLASH,
     appworld_task_output_dir,
     build_agent_config,
     evaluate_world,
@@ -49,6 +52,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--task-id", default="287e338_1")
+    parser.add_argument("--agent-model", default="qwen3-coder-flash-2025-07-28")
     parser.add_argument("--checkpoint-id", default="287e338_1_post_0008")
     parser.add_argument(
         "--source-task-dir",
@@ -68,9 +72,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-environment-executions", type=int, default=10_000)
     parser.add_argument("--max-controller-calls", type=int, default=10_000)
     parser.add_argument("--max-controller-blocks", type=int, default=10_000)
+    parser.add_argument("--max-extra-agent-turns-after-block", type=int, default=10_000)
     parser.add_argument("--max-cost-cny", type=float, default=float("inf"))
     parser.add_argument("--branch", choices=("baseline", "controller"), default="controller")
     parser.add_argument("--disable-controller", action="store_true")
+    parser.add_argument("--external-action", default=None)
+    parser.add_argument("--external-guidance", default=None)
     parser.add_argument("--skip-inprocess-evaluate", action="store_true")
     parser.add_argument(
         "--retain-smoke-artifacts",
@@ -97,11 +104,22 @@ def main() -> int:
     config = {
         "task_id": args.task_id,
         "checkpoint_id": args.checkpoint_id,
-        "agent_model": "qwen3-coder-flash-2025-07-28",
+        "agent_model": (
+            OPENAI_GPT4O_MINI
+            if args.agent_model == "openai/gpt-4o-mini"
+            else DEEPSEEK_V4_FLASH
+            if args.agent_model == DEEPSEEK_V4_FLASH
+            else args.agent_model
+        ),
         "controller_model": DEFAULT_CONTROLLER_MODEL,
         "controller_backend": "LiveLLMBackend",
         "branch": args.branch,
         "controller_enabled": not args.disable_controller,
+        "external_intervention": (
+            {"action": args.external_action, "guidance": args.external_guidance}
+            if args.external_guidance
+            else None
+        ),
         "max_agent_turns": args.max_agent_turns,
         "max_environment_executions": args.max_environment_executions,
         "max_controller_calls": args.max_controller_calls,
@@ -126,13 +144,15 @@ def main() -> int:
     from appworld import AppWorld
     from appworld_agents.code.simplified.agent import Agent, ExecutionIO
     import appworld_agents.code.simplified.react_code_agent  # noqa: F401
+    if args.agent_model == DEEPSEEK_V4_FLASH:
+        install_deepseek_no_thinking_adapter()
 
     agent_args = argparse.Namespace(
         max_cost_cny=args.max_cost_cny,
         max_agent_turns=args.max_agent_turns,
         max_extra_agent_turns_after_block=10_000,
     )
-    agent_config = build_agent_config(agent_args, appworld_root)
+    agent_config = build_agent_config(agent_args, appworld_root, args.agent_model)
     agent_config["max_steps"] = None
     agent_config["log_lm_calls"] = args.log_lm_calls
     base_agent = Agent.from_dict(agent_config)
@@ -168,7 +188,7 @@ def main() -> int:
             max_environment_executions=args.max_environment_executions,
             max_controller_calls=args.max_controller_calls,
             max_controller_blocks=args.max_controller_blocks,
-            max_extra_agent_turns_after_block=3,
+            max_extra_agent_turns_after_block=args.max_extra_agent_turns_after_block,
             max_cost_cny=args.max_cost_cny,
         ),
         branch_runtime_logger=branch_logger,
@@ -202,6 +222,7 @@ def main() -> int:
                 reset_world_interaction_logs(world)
                 base_agent.messages = checkpoint["agent_messages"]
                 base_agent.step_number = int(checkpoint["agent_turn_index"])
+                _inject_external_guidance(base_agent, args.external_action, args.external_guidance)
                 raw_logs_source = output_task_dir / "logs"
                 if args.candidate_audit:
                     _run_cached_pre_action(
@@ -312,6 +333,21 @@ def _flush_agent_runtime_logs(agent: Any) -> None:
     console_stream = getattr(console, "file", None)
     if console_stream is not None and not console_stream.closed:
         console_stream.flush()
+
+
+def _inject_external_guidance(agent: Any, action: str | None, guidance: str | None) -> None:
+    """Inject one non-Controller intervention after restore and before generation."""
+    if not guidance:
+        return
+    messages = getattr(agent, "messages", None)
+    if not isinstance(messages, list):
+        raise TypeError("AppWorld agent must expose a list-like messages attribute.")
+    heading = "[ORACLE_INSTRUCTION]"
+    action_line = f"Action: {action}\n" if action else ""
+    content = f"{heading}\n{action_line}\n{guidance.strip()}\n"
+    if any(message.get("content") == content for message in messages if isinstance(message, dict)):
+        return
+    messages.append({"role": "user", "content": content})
 
 
 def _run_cached_pre_action(

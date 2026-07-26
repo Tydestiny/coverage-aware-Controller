@@ -232,6 +232,9 @@ def ensure_appworld_agents_package(appworld_root: Path) -> None:
     """Expose AppWorld's experiments package under the appworld_agents name."""
     if "appworld_agents" in sys.modules:
         return
+    source_root = appworld_root / "src"
+    if source_root.exists() and str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
     package_root = appworld_root / "experiments"
     init_path = package_root / "__init__.py"
     if not init_path.exists():
