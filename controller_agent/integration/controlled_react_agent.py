@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Sequence
+from contextlib import contextmanager
 from typing import Any
 
 from controller_agent.controller.controller import Controller
@@ -65,19 +66,24 @@ class ControlledReActAgent:
         self._current_task_id: str | None = None
         self.last_interception_result: InterceptionResult | None = None
         self.last_controller_input: ControllerInput | None = None
+        self._agent_context_messages: list[dict[str, Any]] = []
+        self._agent_context_complete = False
+        self._previous_controller_decisions: list[dict[str, Any]] = []
+        self._pending_decision_index: int | None = None
 
     def next_execution_inputs_usage_and_status(self, last_execution_outputs: Sequence[Any]) -> Any:
         """Delegate one Agent turn and inspect only proposed execution."""
         self.last_interception_result = None
         self.last_controller_input = None
-        result = self.agent.next_execution_inputs_usage_and_status(last_execution_outputs)
+        self._reset_if_task_changed(self._task_id())
+        self._record_previous_execution_result(last_execution_outputs)
+        with self._capture_agent_context_messages():
+            result = self.agent.next_execution_inputs_usage_and_status(last_execution_outputs)
         if not self.config.enabled:
             return result
         execution_inputs, _, status = result
         if getattr(status, "failed", False) or not execution_inputs:
             return result
-        context = self._build_trigger_context(execution_inputs, last_execution_outputs)
-        self._reset_if_task_changed(context.task_id)
         context = self._build_trigger_context(execution_inputs, last_execution_outputs)
         interception = self.inspect_proposed_execution(context, result, execution_inputs)
         self.last_interception_result = interception
@@ -105,10 +111,13 @@ class ControlledReActAgent:
 
         try:
             controller_input = self.state_builder.build(
-                context.task,
-                trigger,
-                self._history_before_current_output(),
-                self._latest_assistant_output(context.proposed_execution),
+                task=context.task,
+                trigger=trigger,
+                agent_context_messages=self._agent_context_messages,
+                proposed_agent_output=self._latest_assistant_output(context.proposed_execution),
+                proposed_execution=context.proposed_execution,
+                previous_controller_decisions=self._previous_controller_decisions,
+                context_complete=self._agent_context_complete,
             )
             self.last_controller_input = controller_input
             response = self.controller.decide(controller_input)
@@ -120,6 +129,7 @@ class ControlledReActAgent:
             blocked = False
         guidance = self.guidance_builder.build(response.decision) if blocked else None
         self._update_runtime_state(context, response, blocked)
+        self._append_controller_decision(context, trigger, response, guidance, blocked)
         self.logger.log_controller_event(
             context=context,
             trigger=trigger,
@@ -148,6 +158,10 @@ class ControlledReActAgent:
         self.runtime_state.last_trigger_step = None
         self.runtime_state.last_action = None
         self._current_task_id = task_id
+        self._agent_context_messages = []
+        self._agent_context_complete = False
+        self._previous_controller_decisions.clear()
+        self._pending_decision_index = None
         reset = getattr(self.trigger_detector, "reset", None)
         if callable(reset):
             reset()
@@ -161,19 +175,79 @@ class ControlledReActAgent:
             task=self._task_text(),
             proposed_execution=str(getattr(execution_inputs[0], "content", "")),
             last_execution_outputs=list(last_execution_outputs),
-            recent_history=copy.deepcopy(list(getattr(self.agent, "messages", []))[-12:]),
+            recent_history=copy.deepcopy(self._agent_context_messages),
             runtime_state=self.runtime_state.to_dict(),
         )
 
-    def _history_before_current_output(self) -> list[dict[str, Any]]:
-        """Return visible history before the just-generated assistant output."""
-        history = copy.deepcopy(list(getattr(self.agent, "messages", [])))
-        for index in range(len(history) - 1, -1, -1):
-            message = history[index]
-            if isinstance(message, dict) and str(message.get("role", "")).lower() == "assistant":
-                del history[index]
-                break
-        return history[-12:]
+    @contextmanager
+    def _capture_agent_context_messages(self) -> Any:
+        """Capture only the current task runtime view of the Agent model call."""
+        self._agent_context_messages = []
+        self._agent_context_complete = False
+        language_model = getattr(self.agent, "language_model", None)
+        original_generate = getattr(language_model, "generate", None)
+        if not callable(original_generate):
+            yield
+            return
+
+        def capture_generate(*args: Any, **kwargs: Any) -> Any:
+            messages = kwargs.get("messages")
+            if messages is None and args:
+                messages = args[0]
+            if isinstance(messages, list) and all(isinstance(message, dict) for message in messages):
+                runtime_messages = self._controller_runtime_messages(messages)
+                self._agent_context_messages = copy.deepcopy(runtime_messages)
+                self._agent_context_complete = not _contains_agent_truncation_marker(runtime_messages)
+            return original_generate(*args, **kwargs)
+
+        setattr(language_model, "generate", capture_generate)
+        try:
+            yield
+        finally:
+            setattr(language_model, "generate", original_generate)
+
+    def _controller_runtime_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Exclude the Agent's static preamble while retaining the current task history."""
+        boundary = getattr(self.agent, "num_instruction_messages", None)
+        if not isinstance(boundary, int) or boundary < 1 or boundary > len(messages):
+            return list(messages)
+        agent_messages = getattr(self.agent, "messages", None)
+        if not isinstance(agent_messages, list) or agent_messages[: boundary - 1] != messages[: boundary - 1]:
+            return list(messages)
+        return [messages[boundary - 1], *messages[boundary:]]
+
+    def _record_previous_execution_result(self, outputs: Sequence[Any]) -> None:
+        """Attach the next observed environment output to the prior decision."""
+        if self._pending_decision_index is None or not outputs:
+            return
+        self._previous_controller_decisions[self._pending_decision_index]["execution_result"] = copy.deepcopy(
+            [getattr(output, "content", output) for output in outputs]
+        )
+        self._pending_decision_index = None
+
+    def _append_controller_decision(
+        self,
+        context: TriggerContext,
+        trigger: TriggerResult,
+        response: ControllerResponse,
+        guidance: str | None,
+        blocked: bool,
+    ) -> None:
+        """Persist a causal decision record for subsequent Controller calls."""
+        self._previous_controller_decisions.append(
+            {
+                "step_index": context.step_index,
+                "trigger_reason": trigger.reason,
+                "trigger_metadata": copy.deepcopy(trigger.metadata),
+                "action": response.decision.action.value,
+                "reason": response.decision.reason,
+                "instruction": response.decision.instruction,
+                "guidance": guidance,
+                "blocked": blocked,
+                "execution_result": None,
+            }
+        )
+        self._pending_decision_index = len(self._previous_controller_decisions) - 1
 
     def _latest_assistant_output(self, fallback: str) -> str:
         """Return the complete latest assistant message, falling back to code."""
@@ -263,3 +337,18 @@ def _before_finish_composite() -> CompositeTriggerDetectorWithBudget:
         )
     )
     return CompositeTriggerDetectorWithBudget(full_config=config)
+
+
+_AGENT_CONTEXT_TRUNCATION_MARKERS = ("[TRIMMED HISTORY]", "[NOT SHOWN FOR BREVITY]")
+
+
+def _contains_agent_truncation_marker(messages: list[dict[str, Any]]) -> bool:
+    """Return whether AppWorld marked any Agent-visible history as abbreviated."""
+    return any(
+        marker in content
+        for message in messages
+        if isinstance(message, dict)
+        for content in (message.get("content"),)
+        if isinstance(content, str)
+        for marker in _AGENT_CONTEXT_TRUNCATION_MARKERS
+    )

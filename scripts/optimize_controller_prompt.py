@@ -462,6 +462,7 @@ def build_pairs(
     max_pairs: int,
     max_steps_per_branch: int,
     text_limit: int,
+    _legacy_unused: int | None = None,
 ) -> list[dict[str, Any]]:
     grouped: dict[tuple[str, str], dict[str, BranchRecord]] = {}
 
@@ -509,6 +510,10 @@ def build_pairs(
                 },
             },
         }
+        sample["contrast_label"] = _contrast_label(
+            sample["branches"]["baseline"]["outcome"],
+            sample["branches"]["controller"]["outcome"],
+        )
 
         if oracle is not None:
             sample["branches"]["oracle"] = {
@@ -536,6 +541,15 @@ def build_pairs(
     return pairs
 
 
+def _contrast_label(baseline: dict[str, Any], controller: dict[str, Any]) -> str:
+    """Classify the coarse baseline/controller outcome contrast."""
+    if baseline.get("success") is False and controller.get("success") is True:
+        return "controller_helpful"
+    if baseline.get("success") is True and controller.get("success") is False:
+        return "controller_unnecessary_or_harmful"
+    return "no_outcome_change"
+
+
 def build_user_prompt(
     current_prompt: str,
     pairs: list[dict[str, Any]],
@@ -554,8 +568,8 @@ def build_user_prompt(
                 "PROCEED",
                 "VERIFY_TARGET_SET",
                 "LOOKUP_API_SPEC",
+                "FIX_EXECUTION",
                 "REPLAN",
-                "BLOCK_RISKY_ACTION",
             ],
             "non_negotiable": (
                 "Preserve the existing action vocabulary and output schema."

@@ -45,7 +45,7 @@ def wrap(output: str, backend, enabled: bool = True, config: ControllerConfig | 
 def test_disabled_wrapper_is_behaviorally_transparent() -> None:
     wrapped, logger, adapter = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: {"action": "BLOCK_RISKY_ACTION", "reason": "x"},
+        lambda _: {"action": "REPLAN", "reason": "x"},
         enabled=False,
     )
     result = wrapped.next_execution_inputs_usage_and_status([])
@@ -119,7 +119,7 @@ def test_trigger_context_fields_are_complete() -> None:
     assert context.task == "Do task"
     assert context.proposed_execution == "print('continue')"
     assert context.last_execution_outputs == ["last output"]
-    assert context.recent_history == [{"role": "assistant", "content": "created record id=abc"}]
+    assert context.recent_history == []
     assert "total_calls" in context.runtime_state
 
 
@@ -130,6 +130,26 @@ def test_legacy_controller_backend_mapping_is_compatible() -> None:
     assert isinstance(response, ControllerResponse)
     assert response.decision.action == Action.PROCEED
     assert response.model_name is None
+
+
+def test_fix_execution_mapping_blocks_and_injects_guidance() -> None:
+    """FIX_EXECUTION is a valid non-PROCEED action with normal block semantics."""
+    wrapped, logger, adapter = wrap(
+        "apis.supervisor.complete_task()",
+        lambda _: {
+            "action": "FIX_EXECUTION",
+            "reason": "access token omitted",
+            "instruction": "Pass the existing access token and retry this call.",
+        },
+    )
+
+    result = wrapped.next_execution_inputs_usage_and_status([])
+
+    assert isinstance(result, OfflineInterceptionResult)
+    assert result.interception.allow_execution is False
+    assert adapter.applied[0].allow_execution is False
+    assert logger.events[0]["action"] == Action.FIX_EXECUTION.value
+    assert "Pass the existing access token" in result.interception.guidance_message
 
 
 def test_controller_response_usage_is_logged() -> None:
@@ -175,7 +195,7 @@ def test_invalid_json_and_exceptions_fail_open() -> None:
 def test_runtime_state_tracks_calls_blocks_and_limits() -> None:
     wrapped, logger, adapter = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: {"action": "BLOCK_RISKY_ACTION", "reason": "risk", "instruction": "Stop."},
+        lambda _: {"action": "REPLAN", "reason": "risk", "instruction": "Stop."},
         config=ControllerConfig(enabled=True, max_controller_calls_per_task=1, max_consecutive_blocks=1),
     )
     first = wrapped.next_execution_inputs_usage_and_status([])
@@ -185,7 +205,7 @@ def test_runtime_state_tracks_calls_blocks_and_limits() -> None:
     assert wrapped.runtime_state.total_calls == 1
     assert wrapped.runtime_state.total_blocks == 1
     assert wrapped.runtime_state.consecutive_blocks == 1
-    assert wrapped.runtime_state.last_action == Action.BLOCK_RISKY_ACTION.value
+    assert wrapped.runtime_state.last_action == Action.REPLAN.value
     assert adapter.applied[0].allow_execution is False
     assert logger.events[0]["total_controller_calls"] == 1
     assert logger.events[0]["total_controller_blocks"] == 1
@@ -195,7 +215,7 @@ def test_runtime_state_tracks_calls_blocks_and_limits() -> None:
 def test_unconfigured_adapter_does_not_execute_empty_code() -> None:
     wrapped, _, _ = wrap(
         "apis.supervisor.complete_task()",
-        lambda _: ControllerDecision(Action.BLOCK_RISKY_ACTION, "unsafe", "Do more checks."),
+        lambda _: ControllerDecision(Action.REPLAN, "unsafe", "Do more checks."),
     )
     result = wrapped.next_execution_inputs_usage_and_status([])
     assert isinstance(result, OfflineInterceptionResult)
@@ -209,9 +229,10 @@ def _minimal_controller_input():
     return ControllerInput(
         task="Do task",
         trigger_reason="before_finish",
-        recent_history=[],
-        current_agent_output="apis.supervisor.complete_task()",
-        known_entities=[],
-        completed_operations=[],
-        recent_errors=[],
+        trigger_metadata={},
+        agent_context_messages=[],
+        proposed_agent_output="apis.supervisor.complete_task()",
+        proposed_execution="apis.supervisor.complete_task()",
+        previous_controller_decisions=[],
+        context_complete=False,
     )

@@ -1,24 +1,25 @@
-Checkpoint call. Decide one action.
-
-trigger_reason: {{trigger_reason}}
-case_type_hint: {{case_type_hint}}
-
-## Task instruction
+## task
 {{task}}
 
-## Proposed agent code / execution
-{{current_agent_output}}
+## trigger_reason
+{{trigger_reason}}
 
-## Recent errors (most recent last)
-{{recent_errors}}
+## trigger_metadata
+{{trigger_metadata}}
 
-## Completed operations (observed)
-{{completed_operations}}
+## context_complete
+{{context_complete}}
 
-## Known entities
-{{known_entities}}
+## agent_context_messages
+{{agent_context_messages}}
 
-## Recent history (truncated if long)
-{{recent_history}}
+## previous_controller_decisions
+{{previous_controller_decisions}}
+
+## proposed_agent_output
+{{proposed_agent_output}}
+
+## proposed_execution
+{{proposed_execution}}
 
 Return ONLY the JSON object specified in the system prompt.

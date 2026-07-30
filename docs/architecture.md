@@ -55,7 +55,7 @@ The core link has passed a real Agent API smoke test with Qwen Coder Flash on Ap
 - `ControllerRuntimeState`: total calls, total blocks, consecutive blocks, last trigger step, and last action.
 - `ControllerConfig`: enabled flag, max calls, max consecutive blocks, and fail-open setting.
 - `InterceptionResult`: runtime-neutral allow/block result, guidance, trigger, controller response, and block reason.
-- `Action`: `PROCEED`, `VERIFY_TARGET_SET`, `LOOKUP_API_SPEC`, `REPLAN`, `BLOCK_RISKY_ACTION`.
+- `Action`: `PROCEED`, `VERIFY_TARGET_SET`, `LOOKUP_API_SPEC`, `FIX_EXECUTION`, `REPLAN`.
 
 The public interfaces are:
 

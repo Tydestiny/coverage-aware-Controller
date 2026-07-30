@@ -86,3 +86,21 @@ def test_controller_disabled_preserves_original_budget_flow() -> None:
     assert world.executed_codes == ["apis.supervisor.complete_task()"]
     assert controlled.runtime_state.total_calls == 0
     assert controlled.runtime_state.total_blocks == 0
+
+
+def test_identical_code_with_identical_observation_stops_as_a_loop() -> None:
+    """A genuine no-progress loop ends without reinstating a global turn cap."""
+    runner, world, _ = make_runner(
+        ["print('same')", "print('same')", "print('same')", "print('later')"],
+        RunnerBudget(
+            max_agent_turns=None,
+            max_environment_executions=None,
+            max_consecutive_identical_executions=3,
+        ),
+    )
+
+    runner.run_initialized_world(world)
+
+    assert world.executed_codes == ["print('same')", "print('same')", "print('same')"]
+    assert runner.stop_reason == "repeated_action_loop"
+    assert runner.turn_events[-1]["termination_reason"] == "repeated_action_loop"

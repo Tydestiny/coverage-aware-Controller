@@ -70,8 +70,10 @@ def test_before_finish_proceed_executes_original_once_with_full_output() -> None
     )
     assert world.executed_codes == ["I verified the result.\n```python\napis.supervisor.complete_task()\n```"]
     assert len(backend.inputs) == 1
-    assert backend.inputs[0].current_agent_output.startswith("I verified")
-    assert "complete_task" not in "\n".join(backend.inputs[0].completed_operations)
+    assert backend.inputs[0].proposed_agent_output.startswith("I verified")
+    assert "complete_task" not in "\n".join(
+        str(message.get("content", "")) for message in backend.inputs[0].agent_context_messages
+    )
     assert runner.turn_events[0]["controller_action"] == "PROCEED"
     assert runner.turn_events[0]["guidance_injected"] is False
     assert controlled.runtime_state.total_calls == 1
@@ -150,4 +152,4 @@ def test_runner_writes_direct_branch_records_with_raw_step_numbers(tmp_path: Pat
     assert continuation[-1]["task_completed"] is True
     assert continuation[-1]["termination_reason"] == "task_completed"
     assert calls[0]["step_number"] == continuation[0]["step_number"]
-    assert calls[0]["controller_input"]["current_agent_output"] == "apis.supervisor.complete_task()"
+    assert calls[0]["controller_input"]["proposed_agent_output"] == "apis.supervisor.complete_task()"

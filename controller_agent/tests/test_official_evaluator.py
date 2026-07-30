@@ -6,7 +6,23 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from controller_agent.evaluation.official_evaluator import run_official_evaluation, update_run_summary
+from controller_agent.evaluation.official_evaluator import (
+    official_evaluator_command,
+    run_official_evaluation,
+    update_run_summary,
+)
+
+
+def test_official_evaluator_prefers_local_windows_cli(tmp_path: Path, monkeypatch: object) -> None:
+    """A local AppWorld virtual environment is the evaluator runtime on Windows."""
+    executable = tmp_path / ".venv" / "Scripts" / "appworld.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    monkeypatch.setattr("controller_agent.evaluation.official_evaluator.os.name", "nt")  # type: ignore[attr-defined]
+
+    assert official_evaluator_command(tmp_path, "smoke", "task_1") == [
+        str(executable), "evaluate", "smoke", "--task-id", "task_1"
+    ]
 
 
 def test_run_official_evaluation_reads_task_result(tmp_path: Path) -> None:
@@ -39,5 +55,6 @@ def test_update_run_summary_preserves_lifecycle_error(tmp_path: Path) -> None:
     )
 
     assert merged["in_process"] == {"available": False}
+    assert merged["official"]["task_result"]["success"] is True
     assert merged["official_evaluator"]["task_result"]["success"] is True
     assert merged["known_lifecycle_error"]["stage"] == "world.close"

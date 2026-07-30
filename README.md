@@ -160,7 +160,7 @@ When controller mode is enabled:
 4. `StateBuilder` builds a `ControllerInput` from visible task/history/output only.
 5. `Controller.decide` returns a `ControllerResponse` containing a `ControllerDecision` and optional usage metadata.
 6. `ControllerDecision.action` remains one of:
-   `PROCEED`, `VERIFY_TARGET_SET`, `LOOKUP_API_SPEC`, `REPLAN`, `BLOCK_RISKY_ACTION`.
+   `PROCEED`, `VERIFY_TARGET_SET`, `LOOKUP_API_SPEC`, `FIX_EXECUTION`, `REPLAN`.
 7. `inspect_proposed_execution(...)` returns an `InterceptionResult`.
 8. The integration adapter decides how to apply that result to the concrete runtime.
 

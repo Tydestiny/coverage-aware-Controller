@@ -12,11 +12,12 @@ def _input() -> ControllerInput:
     return ControllerInput(
         task="Test task",
         trigger_reason="before_finish",
-        recent_history=[{"role": "assistant", "content": "check state"}],
-        current_agent_output="apis.supervisor.complete_task()",
-        known_entities=[],
-        completed_operations=[],
-        recent_errors=[],
+        trigger_metadata={},
+        agent_context_messages=[{"role": "assistant", "content": "check state"}],
+        proposed_agent_output="apis.supervisor.complete_task()",
+        proposed_execution="apis.supervisor.complete_task()",
+        previous_controller_decisions=[],
+        context_complete=True,
     )
 
 
@@ -87,7 +88,7 @@ def test_runtime_logger_writes_isolated_baseline_and_controller_records(tmp_path
     assert baseline.raw_logs_dir.is_dir() and controller.raw_logs_dir.is_dir()
     calls = _rows(controller.controller_calls_path)
     assert calls[0]["record_origin"] == "runtime_direct"
-    assert calls[0]["controller_input"]["current_agent_output"] == "apis.supervisor.complete_task()"
+    assert calls[0]["controller_input"]["proposed_agent_output"] == "apis.supervisor.complete_task()"
     assert calls[0]["controller_response"]["decision"]["action"] == "REPLAN"
     assert calls[0]["usage"] == {"input_tokens": 13, "output_tokens": 7, "total_tokens": 20}
 
@@ -151,6 +152,24 @@ def test_runtime_logger_rejects_prefix_steps(tmp_path: Path) -> None:
         raise AssertionError("Expected checkpoint boundary validation failure")
 
 
+def test_runtime_logger_supports_initial_state_runs(tmp_path: Path) -> None:
+    """An initial-state run treats step zero and later as continuation data."""
+    from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
+
+    logger = BranchRuntimeLogger(tmp_path / "initial", branch="baseline", checkpoint_last_step=-1)
+    logger.record_continuation(
+        step_number=0,
+        agent_output="print('initial')",
+        generated_code="print('initial')",
+        execution_allowed=True,
+        environment_observation="ok",
+        task_completed=False,
+        termination_reason=None,
+    )
+
+    assert _rows(logger.continuation_path)[0]["step_number"] == 0
+
+
 def test_checkpoint_manifest_records_shared_prefix_boundary(tmp_path: Path) -> None:
     """Checkpoint metadata explicitly separates shared prefix and continuation."""
     from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
@@ -187,8 +206,115 @@ def test_raw_logs_are_copied_to_the_owning_branch_only(tmp_path: Path) -> None:
     assert not (controller.raw_logs_dir / "logger.jsonl").exists()
 
 
-def test_raw_log_archive_redacts_credentials_without_dropping_records(tmp_path: Path) -> None:
-    """Durable raw logs retain calls while excluding keys and literal credentials."""
+def test_raw_log_archive_joins_checkpoint_prefix_and_preserves_continuation(tmp_path: Path) -> None:
+    """The readable logger contains task history while continuation stays separate."""
+    from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
+
+    prefix = tmp_path / "baseline" / "logs" / "logger.jsonl"
+    prefix.parent.mkdir(parents=True)
+    prefix.write_text(
+        "\n".join(
+            json.dumps(record)
+            for record in (
+                {"role": "agent", "step_number": 1, "content": "prefix action"},
+                {"role": "environment", "content": "prefix observation"},
+                {"role": "agent", "step_number": 2, "content": "must not be copied"},
+            )
+        ) + "\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "branch" / "logs"
+    source.mkdir(parents=True)
+    source_logger = '{"role":"agent","step_number":2,"content":"branch action"}\n'
+    (source / "logger.jsonl").write_text(source_logger, encoding="utf-8")
+
+    logger = BranchRuntimeLogger(tmp_path / "result", branch="controller", checkpoint_last_step=1)
+    logger.archive_raw_logs(source, prefix_logger_jsonl=prefix)
+
+    combined = _rows(logger.raw_logs_dir / "logger.jsonl")
+    assert [row["content"] for row in combined] == ["prefix action", "prefix observation", "branch action"]
+    assert (logger.raw_logs_dir / "logger_continuation.jsonl").read_text(encoding="utf-8") == source_logger
+    metadata = json.loads((logger.raw_logs_dir / "logger_history_manifest.json").read_text(encoding="utf-8"))
+    assert metadata["prefix_record_count"] == 2
+    assert metadata["continuation_record_count"] == 1
+
+
+def test_raw_log_archive_preserves_cached_checkpoint_proposal(tmp_path: Path) -> None:
+    """A replayed pre-action remains visible before the restored continuation."""
+    from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
+
+    prefix = tmp_path / "baseline" / "logger.jsonl"
+    prefix.parent.mkdir(parents=True)
+    prefix.write_text('{"role":"environment","step_number":6,"content":"prefix"}\n', encoding="utf-8")
+    source = tmp_path / "branch" / "logs"
+    source.mkdir(parents=True)
+    (source / "logger.jsonl").write_text(
+        '{"role":"agent","step_number":8,"content":"regenerated action"}\n',
+        encoding="utf-8",
+    )
+    (source / "logger.log").write_text("restored continuation\n", encoding="utf-8")
+
+    logger = BranchRuntimeLogger(tmp_path / "result", branch="controller", checkpoint_last_step=6)
+    logger.record_cached_checkpoint_proposal(
+        step_number=7,
+        agent_output="original proposed action",
+        generated_code="apis.supervisor.complete_task()",
+        controller_triggered=True,
+        controller_action="REPLAN",
+        guidance="verify first",
+        execution_allowed=False,
+    )
+    logger.archive_raw_logs(source, prefix_logger_jsonl=prefix)
+
+    combined = _rows(logger.raw_logs_dir / "logger.jsonl")
+    assert [row["content"] for row in combined] == ["prefix", "original proposed action", "regenerated action"]
+    proposal = combined[1]
+    assert proposal["event_type"] == "checkpoint_proposed_action"
+    assert proposal["execution_allowed"] is False
+    continuation = _rows(logger.raw_logs_dir / "logger_continuation.jsonl")
+    assert [row["content"] for row in continuation] == ["original proposed action", "regenerated action"]
+    assert "original proposed action" in (logger.raw_logs_dir / "logger.log").read_text(encoding="utf-8")
+
+
+def test_raw_log_archive_keeps_full_readable_logger_and_continuation(tmp_path: Path) -> None:
+    """Readable logs retain task context without retaining future baseline events."""
+    from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
+
+    prefix_logs = tmp_path / "baseline" / "logs"
+    prefix_logs.mkdir(parents=True)
+    (prefix_logs / "logger.jsonl").write_text(
+        '\n'.join((
+            '{"role":"agent","step_number":1,"content":"prefix action"}',
+            '{"role":"environment"}',
+            '{"role":"agent","step_number":2,"content":"future action"}',
+        )) + '\n',
+        encoding="utf-8",
+    )
+    (prefix_logs / "logger.log").write_text(
+        "task start\nagent (step #1)\nenvironment (step #2)\nagent (step #2)\nfuture action\n",
+        encoding="utf-8",
+    )
+    source = tmp_path / "branch" / "logs"
+    source.mkdir(parents=True)
+    (source / "logger.jsonl").write_text('{"role":"agent","step_number":2}\n', encoding="utf-8")
+    (source / "logger.log").write_text("agent (step #2) continuation\n", encoding="utf-8")
+
+    logger = BranchRuntimeLogger(tmp_path / "result", branch="controller", checkpoint_last_step=1)
+    logger.archive_raw_logs(
+        source,
+        prefix_logger_jsonl=prefix_logs / "logger.jsonl",
+        prefix_logger_log=prefix_logs / "logger.log",
+    )
+
+    full = (logger.raw_logs_dir / "logger.log").read_text(encoding="utf-8")
+    assert "task start" in full
+    assert "future" not in full
+    assert "CHECKPOINT CONTINUATION" in full
+    assert (logger.raw_logs_dir / "logger_continuation.log").read_text(encoding="utf-8") == "agent (step #2) continuation\n"
+
+
+def test_raw_log_archive_preserves_credentials_without_dropping_records(tmp_path: Path) -> None:
+    """Durable raw logs preserve exact provider records for replay."""
     from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
 
     source = tmp_path / "temporary" / "logs"
@@ -202,6 +328,6 @@ def test_raw_log_archive_redacts_credentials_without_dropping_records(tmp_path: 
     assert logger.archive_raw_logs(source) == ["lm_calls.jsonl"]
     rows = _rows(logger.raw_logs_dir / "lm_calls.jsonl")
     assert rows[0]["id"] == "call-1"
-    assert rows[0]["input"]["api_key"] == "<redacted>"
-    assert "abc" not in json.dumps(rows[0])
-    assert "hidden" not in json.dumps(rows[0])
+    assert rows[0]["input"]["api_key"] == "live-secret"
+    assert "abc" in json.dumps(rows[0])
+    assert "hidden" in json.dumps(rows[0])

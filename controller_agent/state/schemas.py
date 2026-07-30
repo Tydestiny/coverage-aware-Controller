@@ -19,7 +19,7 @@ class Action(str, Enum):
     VERIFY_TARGET_SET = "VERIFY_TARGET_SET"
     LOOKUP_API_SPEC = "LOOKUP_API_SPEC"
     REPLAN = "REPLAN"
-    BLOCK_RISKY_ACTION = "BLOCK_RISKY_ACTION"
+    FIX_EXECUTION = "FIX_EXECUTION"
 
 
 @dataclass(frozen=True)
@@ -46,15 +46,16 @@ class TriggerContext:
 
 @dataclass(frozen=True)
 class ControllerInput:
-    """Information visible to a Controller decision."""
+    """Complete causal context visible to one Controller decision."""
 
     task: str
     trigger_reason: str
-    recent_history: list[dict[str, Any]]
-    current_agent_output: str
-    known_entities: list[str]
-    completed_operations: list[str]
-    recent_errors: list[str]
+    trigger_metadata: dict[str, Any]
+    agent_context_messages: list[dict[str, Any]]
+    proposed_agent_output: str
+    proposed_execution: str
+    previous_controller_decisions: list[dict[str, Any]]
+    context_complete: bool
 
 
 @dataclass(frozen=True)

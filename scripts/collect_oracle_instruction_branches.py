@@ -51,6 +51,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--appworld-root", type=Path, default=REPO_ROOT.parent / "appworld")
     parser.add_argument("--agent-model", default="qwen3-coder-flash-2025-07-28")
+    parser.add_argument("--controller-model", default="qwen3.7-max-2026-05-20")
+    parser.add_argument("--controller-base-url", default=None)
+    parser.add_argument("--controller-api-key-env", default=None)
     parser.add_argument("--max-agent-turns", type=int, default=10_000)
     parser.add_argument("--max-environment-executions", type=int, default=10_000)
     parser.add_argument("--max-controller-calls", type=int, default=10_000)
@@ -145,6 +148,8 @@ def build_branch_command(
         annotation["task_id"],
         "--agent-model",
         args.agent_model,
+        "--controller-model",
+        getattr(args, "controller_model", "qwen3.7-max-2026-05-20"),
         "--checkpoint-id",
         annotation["checkpoint_id"],
         "--source-task-dir",
@@ -172,8 +177,22 @@ def build_branch_command(
         "--log-lm-calls",
         "--skip-inprocess-evaluate",
     ]
+    controller_base_url = getattr(args, "controller_base_url", None)
+    controller_api_key_env = getattr(args, "controller_api_key_env", None)
+    if controller_base_url:
+        command.extend(["--controller-base-url", controller_base_url])
+    if controller_api_key_env:
+        command.extend(["--controller-api-key-env", controller_api_key_env])
     if branch in {"baseline", "oracle_instruction"}:
         command.append("--disable-controller")
+    if branch == "controller":
+        command.extend(
+            [
+                "--force-controller-at-checkpoint",
+                "--forced-trigger-reason",
+                annotation.get("resolved_trigger_reason", annotation["trigger_type"]),
+            ]
+        )
     if branch == "oracle_instruction":
         command.extend(
             [
@@ -203,6 +222,8 @@ def execute_batch(args: argparse.Namespace) -> dict[str, Any]:
             "checkpoint_phase": SUPPORTED_PHASE,
             "source_root": str(Path(args.source_root).resolve()),
             "agent_model": args.agent_model,
+            "controller_model": getattr(args, "controller_model", "qwen3.7-max-2026-05-20"),
+            "controller_base_url": getattr(args, "controller_base_url", None),
         },
     )
 
@@ -211,6 +232,9 @@ def execute_batch(args: argparse.Namespace) -> dict[str, Any]:
         task_id = annotation["task_id"]
         checkpoint_id = annotation["checkpoint_id"]
         source_task_dir = Path(args.source_root).resolve() / task_id
+        annotation = dict(annotation)
+        if args.execute:
+            annotation["resolved_trigger_reason"] = _resolve_trigger_reason(source_task_dir, checkpoint_id)
         checkpoint = _read_json(source_task_dir / "checkpoints" / SUPPORTED_PHASE / f"{checkpoint_id}.json")
         try:
             checkpoint_step = int(checkpoint["agent_turn_index"])
@@ -309,6 +333,22 @@ def execute_batch(args: argparse.Namespace) -> dict[str, Any]:
             summary["failures"].append({"branch": "token_usage", "reason": f"{type(exc).__name__}: {exc}"})
     _write_json(root / "batch_summary.json", summary)
     return summary
+
+
+def _resolve_trigger_reason(task_dir: Path, checkpoint_id: str) -> str:
+    """Read the selected checkpoint's concrete trigger reason from its link ledger."""
+    path = task_dir / "trigger_link.jsonl"
+    if not path.is_file():
+        raise FileNotFoundError(f"Missing trigger link ledger: {path}")
+    for line in path.read_text(encoding="utf-8").splitlines():
+        row = json.loads(line)
+        ids = row.get("checkpoint_ids", {})
+        trigger = row.get("trigger", {})
+        if ids.get("post_observation") == checkpoint_id:
+            if trigger.get("triggered") is not True or not isinstance(trigger.get("reason"), str):
+                raise ValueError(f"Checkpoint {checkpoint_id} has no positive trigger in {path}")
+            return trigger["reason"]
+    raise ValueError(f"Checkpoint {checkpoint_id} is absent from {path}")
 
 
 def _record_failure(root: Path, annotation: dict[str, Any], branch: str, error: str) -> None:

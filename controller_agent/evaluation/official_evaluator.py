@@ -3,9 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
+
+
+def official_evaluator_command(appworld_root: Path, experiment_name: str, task_id: str) -> list[str]:
+    """Select the installed AppWorld CLI rather than an unrelated uv environment."""
+    if os.name == "nt":
+        executable = appworld_root / ".venv" / "Scripts" / "appworld.exe"
+        if executable.is_file():
+            return [str(executable), "evaluate", experiment_name, "--task-id", task_id]
+    return ["uv", "run", "appworld", "evaluate", experiment_name, "--task-id", task_id]
 
 
 def run_official_evaluation(
@@ -14,7 +24,7 @@ def run_official_evaluation(
     task_id: str,
 ) -> dict[str, Any]:
     """Run the official evaluator and return the task-level result."""
-    command = ["uv", "run", "appworld", "evaluate", experiment_name, "--task-id", task_id]
+    command = official_evaluator_command(appworld_root, experiment_name, task_id)
     completed = subprocess.run(
         command,
         cwd=appworld_root,
@@ -63,6 +73,9 @@ def update_run_summary(
         loaded = json.loads(summary_path.read_text(encoding="utf-8"))
         if isinstance(loaded, dict):
             current = loaded
+    # ``official`` is the canonical evaluator_result.json field consumed by
+    # experiment analysis. Retain the older name for existing smoke reports.
+    current["official"] = official_result
     current["official_evaluator"] = official_result
     if lifecycle_error is not None:
         current["known_lifecycle_error"] = lifecycle_error

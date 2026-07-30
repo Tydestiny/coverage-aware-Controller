@@ -1,4 +1,4 @@
-"""Runtime-only DashScope compatibility for DeepSeek non-thinking calls."""
+"""Runtime-only DashScope compatibility for non-thinking model calls."""
 
 from __future__ import annotations
 
@@ -6,19 +6,31 @@ from typing import Any
 
 
 DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
+QWEN36_PLUS = "qwen3.6-plus"
+_NO_THINKING_MODELS = frozenset({DEEPSEEK_V4_FLASH, QWEN36_PLUS})
 
 
 def install_deepseek_no_thinking_adapter() -> None:
     """Patch AppWorld's in-process caller without editing AppWorld source files."""
+    _install_no_thinking_adapter()
+
+
+def install_qwen36_plus_no_thinking_adapter() -> None:
+    """Send Qwen 3.6 Plus through DashScope with thinking disabled."""
+    _install_no_thinking_adapter()
+
+
+def _install_no_thinking_adapter() -> None:
+    """Install one idempotent adapter for supported DashScope models."""
     from appworld_agents.code.simplified import language_model
 
-    if getattr(language_model, "_controller_deepseek_no_thinking_installed", False):
+    if getattr(language_model, "_controller_dashscope_no_thinking_installed", False):
         return
     original = language_model.non_cached_lm_call
 
     def patched_non_cached_lm_call(**kwargs: Any) -> dict[str, Any]:
-        """Send DeepSeek V4 Flash with the workspace's disable-thinking payload."""
-        if kwargs.get("model") != DEEPSEEK_V4_FLASH:
+        """Send supported models with DashScope's explicit disable-thinking payload."""
+        if kwargs.get("model") not in _NO_THINKING_MODELS:
             return original(**kwargs)
         from openai import OpenAI
 
@@ -35,4 +47,4 @@ def install_deepseek_no_thinking_adapter() -> None:
         return language_model.to_dict(response)
 
     language_model.non_cached_lm_call = patched_non_cached_lm_call
-    language_model._controller_deepseek_no_thinking_installed = True
+    language_model._controller_dashscope_no_thinking_installed = True

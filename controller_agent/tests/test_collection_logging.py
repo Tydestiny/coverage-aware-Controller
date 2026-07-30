@@ -17,8 +17,8 @@ def _load_collector_module():
     return module
 
 
-def test_native_lm_call_log_is_redacted(tmp_path: Path) -> None:
-    """Native request logs retain data but remove API key values."""
+def test_collection_module_does_not_rewrite_native_lm_call_logs(tmp_path: Path) -> None:
+    """Collection preserves native logs for exact checkpoint reconstruction."""
     module = _load_collector_module()
     path = tmp_path / "lm_calls.jsonl"
     secret = "sk-abcdefghijklmnopqrstuvwxyz123"
@@ -27,8 +27,7 @@ def test_native_lm_call_log_is_redacted(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    module.sanitize_raw_lm_call_log(path)
-
-    sanitized = json.loads(path.read_text(encoding="utf-8"))
-    assert sanitized["input"]["api_key"] == "[REDACTED]"
-    assert sanitized["input"]["message"] == "sk-[REDACTED]"
+    assert not hasattr(module, "sanitize_raw_lm_call_log")
+    preserved = json.loads(path.read_text(encoding="utf-8"))
+    assert preserved["input"]["api_key"] == secret
+    assert preserved["input"]["message"] == secret

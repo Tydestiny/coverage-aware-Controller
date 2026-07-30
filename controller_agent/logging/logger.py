@@ -54,9 +54,12 @@ class ExperimentLogger:
             "total_controller_calls": runtime_state.total_calls,
             "total_controller_blocks": runtime_state.total_blocks,
             "consecutive_blocks": runtime_state.consecutive_blocks,
-            "known_entities": copy.deepcopy(controller_input.known_entities),
-            "completed_operations": copy.deepcopy(controller_input.completed_operations),
-            "recent_errors": copy.deepcopy(controller_input.recent_errors),
+            "trigger_metadata": copy.deepcopy(controller_input.trigger_metadata),
+            "agent_context_messages": copy.deepcopy(controller_input.agent_context_messages),
+            "proposed_agent_output": controller_input.proposed_agent_output,
+            "proposed_execution": controller_input.proposed_execution,
+            "previous_controller_decisions": copy.deepcopy(controller_input.previous_controller_decisions),
+            "context_complete": controller_input.context_complete,
         }
         json.dumps(event)
         self.events.append(event)

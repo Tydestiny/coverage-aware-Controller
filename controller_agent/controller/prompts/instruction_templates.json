@@ -6,11 +6,11 @@
     "membership_cleanup_write": "Before any deletion, verify remove_set = library - liked - downloaded (or the exact membership rule in the task). Print library/liked/downloaded counts and remove_set IDs. Only delete that remove_set; keep liked/downloaded items untouched.",
     "generic": "Pause and print a verified target checklist against the task constraints. Continue only after the checklist is explicit and complete."
   },
-  "BLOCK_RISKY_ACTION": {
-    "write_before": "BLOCK the current write. First gather evidence, compute the exact target set, print counts/IDs, then rewrite so only that set is modified. Do not submit a natural-language answer instead of doing the work.",
-    "complete_before": "Do not call complete_task yet. Remaining required work is unfinished or the answer is an excuse. Finish the real state changes (or produce the required structured answer), then complete_task() with the correct answer format (often answer=None for state tasks).",
-    "membership_cleanup_write": "Do not remove songs/albums yet. First list library, liked, and downloaded. Compute remove_set = library - liked - downloaded. Print counts and IDs, then remove only remove_set. Do not submit a natural-language answer.",
-    "generic": "The proposed step is unsafe or premature. Forbid it, repair the missing precondition, then continue."
+  "FIX_EXECUTION": {
+    "write_before": "Do not execute the current write yet. Apply the concrete correction visible in the latest error or API response, then retry only the corrected call and verify its result.",
+    "complete_before": "Do not complete yet. Fix the specific execution error visible in the trajectory, rerun the corrected operation, and verify the required result before completing.",
+    "error_after": "Keep the current task strategy. Apply the exact local repair visible in the latest error, response, or API specification, then retry the minimal corrected step.",
+    "generic": "Keep the current strategy, but correct the visible local execution error before continuing."
   },
   "REPLAN": {
     "write_before": "Abandon the current write plan. Re-plan in order: auth if needed -> enumerate evidence -> compute target set -> write only the set -> verify by re-listing.",

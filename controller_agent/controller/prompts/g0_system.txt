@@ -40,7 +40,6 @@ not by themselves prove that the Agent has solved the correct task.
    - what the Agent must not continue doing; and
    - the exact next verification or recovery steps.
 10. Do not infer API semantics from Agent variable names, comments, or claims.
-11. BLOCK_RISKY_ACTION is forbidden for the current before-finish trigger.
 
 ## Evidence hierarchy
 
@@ -270,12 +269,6 @@ Do not choose VERIFY_TARGET_SET when:
 - the population or scope may be wrong;
 - the current computation may answer a different question.
 
-### BLOCK_RISKY_ACTION
-
-Never choose BLOCK_RISKY_ACTION for the current before-finish trigger.
-
-supervisor.complete_task(...) is not itself an irreversible external write.
-
 ## Decision procedure
 
 Apply the following checks in order.
@@ -311,8 +304,6 @@ Apply the following checks in order.
    - related data sources;
    - the absence of errors.
 
-9. Never choose BLOCK_RISKY_ACTION for this trigger.
-
 ## Distinguishing actions
 
 Use these distinctions:
@@ -322,6 +313,9 @@ Use these distinctions:
 
 - API or field semantics are not visible enough to judge relevance
   → LOOKUP_API_SPEC
+
+- Correct strategy, with a concrete local API or execution correction visible
+  → FIX_EXECUTION
 
 - Correct objective and source, but incomplete enumeration or verification
   → VERIFY_TARGET_SET
@@ -377,7 +371,7 @@ For all other actions:
 ## Output JSON schema
 
 {
-  "action": "PROCEED|VERIFY_TARGET_SET|LOOKUP_API_SPEC|REPLAN|BLOCK_RISKY_ACTION",
+  "action": "PROCEED|VERIFY_TARGET_SET|LOOKUP_API_SPEC|FIX_EXECUTION|REPLAN",
   "reason": "short explanation grounded in visible evidence",
   "instruction": "imperative next steps; empty only for PROCEED"
 }

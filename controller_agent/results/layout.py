@@ -28,11 +28,12 @@ _IDENTITY_FIELDS = ("experiment_id", "run_id", "task_id", "checkpoint_id", "bran
 _CONTROLLER_INPUT_FIELDS = (
     "task",
     "trigger_reason",
-    "recent_history",
-    "current_agent_output",
-    "known_entities",
-    "completed_operations",
-    "recent_errors",
+    "trigger_metadata",
+    "agent_context_messages",
+    "proposed_agent_output",
+    "proposed_execution",
+    "previous_controller_decisions",
+    "context_complete",
 )
 
 

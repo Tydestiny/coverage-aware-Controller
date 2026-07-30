@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import os
-import re
 import sys
 import time
 from pathlib import Path
@@ -28,6 +28,9 @@ AGENT_NAME = "simplified_react_code_agent"
 API_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 OPENAI_GPT4O_MINI = "gpt-4o-mini-2024-07-18"
 OPENAI_ENDPOINT = "https://api.openai.com/v1"
+OPENROUTER_GPT4O_MINI = "openai/gpt-4o-mini"
+OPENROUTER_GPT4O = "openai/gpt-4o"
+OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1"
 DEEPSEEK_V4_FLASH = "deepseek-v4-flash"
 DEEPSEEK_V4_FLASH_ENDPOINT = "https://llm-u8xw1rrtzqaiduhz.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
 
@@ -224,6 +227,46 @@ def build_agent_config(
 
 def build_agent_model_config(agent_model: str) -> dict[str, Any]:
     """Return the fixed provider configuration for a supported Agent model."""
+    if agent_model == "openrouter/gpt-4o-mini":
+        return {
+            "client_name": "openai",
+            "api_type": "chat_completions",
+            "base_url": OPENROUTER_ENDPOINT,
+            "api_key_env_name": "OPENROUTER_API_KEY",
+            "name": OPENROUTER_GPT4O_MINI,
+            "temperature": 0.0,
+            "seed": 100,
+            "drop_reasoning_content": False,
+            "cost_per_token": {
+                "input_cache_hit": 7.5e-08,
+                "input_cache_miss": 1.5e-07,
+                "input_cache_write": 0.0,
+                "output": 6e-07,
+            },
+            "retry_after_n_seconds": 15,
+            "use_cache": False,
+            "max_retries": 1,
+        }
+    if agent_model == "openrouter/gpt-4o":
+        return {
+            "client_name": "openai",
+            "api_type": "chat_completions",
+            "base_url": OPENROUTER_ENDPOINT,
+            "api_key_env_name": "OPENROUTER_API_KEY",
+            "name": OPENROUTER_GPT4O,
+            "temperature": 0.0,
+            "seed": 100,
+            "drop_reasoning_content": False,
+            "cost_per_token": {
+                "input_cache_hit": 1.25e-06,
+                "input_cache_miss": 2.5e-06,
+                "input_cache_write": 0.0,
+                "output": 1e-05,
+            },
+            "retry_after_n_seconds": 15,
+            "use_cache": False,
+            "max_retries": 1,
+        }
     if agent_model in {"openai/gpt-4o-mini", OPENAI_GPT4O_MINI}:
         return {
             "client_name": "openai",
@@ -265,6 +308,14 @@ def build_agent_model_config(agent_model: str) -> dict[str, Any]:
             "retry_after_n_seconds": 15,
             "use_cache": False,
             "max_retries": 1,
+        }
+    if agent_model == "qwen3.6-plus":
+        return {
+            "client_name": "openai", "api_type": "chat_completions", "base_url": API_ENDPOINT,
+            "api_key_env_name": "DASHSCOPE_API_KEY", "name": "qwen3.6-plus", "temperature": 0.0,
+            "seed": 100, "drop_reasoning_content": False,
+            "cost_per_token": {"input_cache_hit": 0.0, "input_cache_miss": 0.0, "input_cache_write": 0.0, "output": 0.0},
+            "retry_after_n_seconds": 15, "use_cache": False, "max_retries": 1,
         }
     if agent_model != MODEL_NAME:
         raise ValueError(f"Unsupported Agent model: {agent_model}")
@@ -455,25 +506,8 @@ def is_infrastructure_or_api_error(exc: Exception) -> bool:
 
 
 def sanitize_messages(value: Any) -> Any:
-    """Remove secrets from nested logs and messages."""
-    if isinstance(value, list):
-        return [sanitize_messages(item) for item in value]
-    if isinstance(value, dict):
-        sanitized: dict[str, Any] = {}
-        for key, item in value.items():
-            if re.search(r"api[_-]?key|authorization|secret", str(key), re.IGNORECASE):
-                sanitized[key] = "[REDACTED]"
-            else:
-                sanitized[key] = sanitize_messages(item)
-        return sanitized
-    if isinstance(value, str):
-        value = re.sub(r"\bsk-[A-Za-z0-9_-]{20,}", "sk-[REDACTED]", value)
-        return re.sub(
-            r"(?i)(\b(?:password|access_?token|refresh_?token|authorization|api_?key|secret|credential)\b(?:\\?[\"']?\s*)(?:=|:|\bis\b)\s*(?:\\?[\"']?))([^'\"\s,}\]\\]+)",
-            r"\1[REDACTED]",
-            value,
-        )
-    return value
+    """Return an unmodified deep copy of runtime messages and records."""
+    return copy.deepcopy(value)
 
 
 def with_wall_total(event: dict[str, Any], total_wall_time: float) -> dict[str, Any]:

@@ -8,6 +8,7 @@ modules must not bypass it to mutate AppWorld execution code directly.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import time
 from typing import Any, Sequence
 
@@ -44,6 +45,7 @@ class RunnerBudget:
     max_controller_blocks: int | None = 1
     max_extra_agent_turns_after_block: int | None = 3
     max_cost_cny: float | None = 1.0
+    max_consecutive_identical_executions: int | None = None
 
 
 class AppWorldInterceptionAdapter:
@@ -116,6 +118,8 @@ class ControlledAppWorldRunner:
         self.checkpoint_hook_errors: list[str] = []
         self.branch_runtime_logger = branch_runtime_logger
         self.controller_prompt_hash = controller_prompt_hash
+        self._last_execution_signature: tuple[str, str] | None = None
+        self._consecutive_identical_execution_count = 0
         if hasattr(agent, "integration_adapter"):
             agent.integration_adapter = self.adapter
 
@@ -123,18 +127,36 @@ class ControlledAppWorldRunner:
         """Run one already constructed world without modifying AppWorld source."""
         self.run_world(world, initialize_agent=True, reset_controller=True)
 
-    def run_restored_world(self, world: Any, *, reset_controller: bool = True) -> None:
-        """Continue a restored world without overwriting restored agent messages."""
-        self.run_world(world, initialize_agent=False, reset_controller=reset_controller)
+    def run_restored_world(
+        self,
+        world: Any,
+        *,
+        reset_controller: bool = True,
+        initial_execution_outputs: Sequence[Any] = (),
+    ) -> None:
+        """Continue a restored world with optional outputs from a staged action."""
+        self.run_world(
+            world,
+            initialize_agent=False,
+            reset_controller=reset_controller,
+            initial_execution_outputs=initial_execution_outputs,
+        )
 
-    def run_world(self, world: Any, *, initialize_agent: bool, reset_controller: bool = True) -> None:
+    def run_world(
+        self,
+        world: Any,
+        *,
+        initialize_agent: bool,
+        reset_controller: bool = True,
+        initial_execution_outputs: Sequence[Any] = (),
+    ) -> None:
         """Run the shared controlled loop for a new or restored AppWorld state."""
         task_id = str(getattr(world, "task_id", ""))
         if initialize_agent and hasattr(self.agent, "initialize"):
             self.agent.initialize(world)
         if reset_controller and hasattr(self.agent, "reset_for_task"):
             self.agent.reset_for_task(task_id)
-        execution_outputs: Sequence[Any] = []
+        execution_outputs: Sequence[Any] = list(initial_execution_outputs)
         while self._should_continue():
             turn_start = time.perf_counter()
             self._increment_step_number()
@@ -234,6 +256,11 @@ class ControlledAppWorldRunner:
             self._append_turn_event(event)
             if task_completed:
                 self.stop_reason = "task_completed"
+                self.turn_events[-1]["termination_reason"] = self.stop_reason
+                self._finalize_last_branch_event(world)
+                break
+            if self._repeated_execution_loop_detected(event):
+                self.stop_reason = "repeated_action_loop"
                 self.turn_events[-1]["termination_reason"] = self.stop_reason
                 self._finalize_last_branch_event(world)
                 break
@@ -528,6 +555,21 @@ class ControlledAppWorldRunner:
     def _all_execution_inputs_empty(self, execution_inputs: Sequence[Any]) -> bool:
         """Return whether no execution input contains code."""
         return not execution_inputs or all(not str(getattr(item, "content", "")).strip() for item in execution_inputs)
+
+    def _repeated_execution_loop_detected(self, event: dict[str, Any]) -> bool:
+        """Stop only when identical code keeps receiving identical feedback."""
+        limit = self.budget.max_consecutive_identical_executions
+        if limit is None:
+            return False
+        code = re.sub(r"\s+", " ", str(event.get("generated_code", "")).strip())
+        observation = re.sub(r"\s+", " ", repr(event.get("environment_observation")).strip())
+        signature = (code, observation)
+        if signature == self._last_execution_signature:
+            self._consecutive_identical_execution_count += 1
+        else:
+            self._last_execution_signature = signature
+            self._consecutive_identical_execution_count = 1
+        return self._consecutive_identical_execution_count >= limit
 
     def _usage_value(self, result: Any, name: str) -> Any:
         """Best-effort extraction from AppWorld Usage objects."""
