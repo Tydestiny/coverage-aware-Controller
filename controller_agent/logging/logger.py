@@ -21,7 +21,28 @@ class ExperimentLogger:
 
     def __init__(self, sink: Callable[[dict[str, Any]], None] | None = None) -> None:
         self.events: list[dict[str, Any]] = []
+        self.trigger_events: list[dict[str, Any]] = []
         self.sink = sink
+
+    def log_trigger_evaluation(
+        self, context: TriggerContext, result: TriggerResult, *, controller_budget_bypassed: bool = False
+    ) -> None:
+        """Record each candidate, including detections bypassed by a budget."""
+        metadata = copy.deepcopy(result.metadata)
+        event = {
+            "event_type": "trigger_evaluation",
+            "task_id": context.task_id,
+            "step_index": context.step_index,
+            "trigger_positive": result.should_call_controller or bool(metadata.get("trigger_positive")),
+            "trigger_budget_admitted": result.should_call_controller,
+            "budget_bypassed": bool(metadata.get("budget_bypassed")) or controller_budget_bypassed,
+            "controller_budget_bypassed": controller_budget_bypassed,
+            "trigger_reason": metadata.get("detected_trigger", result.reason),
+            "trigger_metadata": metadata,
+        }
+        self.trigger_events.append(event)
+        if self.sink is not None:
+            self.sink(copy.deepcopy(event))
 
     def log_controller_event(
         self,
@@ -60,6 +81,7 @@ class ExperimentLogger:
             "proposed_execution": controller_input.proposed_execution,
             "previous_controller_decisions": copy.deepcopy(controller_input.previous_controller_decisions),
             "context_complete": controller_input.context_complete,
+            "context_metadata": copy.deepcopy(controller_input.context_metadata),
         }
         json.dumps(event)
         self.events.append(event)
@@ -93,3 +115,17 @@ class ExperimentLogger:
         self.events.append(event)
         if self.sink is not None:
             self.sink(copy.deepcopy(event))
+
+
+def summarize_trigger_events(events: list[dict[str, Any]]) -> dict[str, int]:
+    """Count candidates, positive detections, and trigger-budget bypasses."""
+    return {
+        "candidate_actions": len(events),
+        "trigger_positive_actions": sum(bool(event.get("trigger_positive")) for event in events),
+        "trigger_budget_bypassed_actions": sum(
+            bool(event.get("budget_bypassed")) and not event.get("trigger_budget_admitted", False)
+            for event in events
+        ),
+        "controller_budget_bypassed_actions": sum(bool(event.get("controller_budget_bypassed")) for event in events),
+        "budget_bypassed_actions": sum(bool(event.get("budget_bypassed")) for event in events),
+    }

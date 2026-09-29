@@ -243,6 +243,9 @@ class ControlledAppWorldRunner:
                 type(item)(content=output, metadata=item.metadata)
                 for item, output in zip(execution_inputs, outputs, strict=True)
             ]
+            record_execution = getattr(self.agent, "record_environment_execution", None)
+            if callable(record_execution):
+                record_execution(execution_outputs)
             for item, output in zip(execution_inputs, execution_outputs, strict=True):
                 self._capture_post_observation(
                     world=world,

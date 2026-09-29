@@ -41,6 +41,8 @@ def main() -> int:
         args.task_id,
     )
     update_run_summary(Path(args.summary).resolve(), result, lifecycle_error)
+    evaluator_path = Path(args.summary).resolve().parent / "evaluator_result.json"
+    evaluator_path.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["available"] else 1
 

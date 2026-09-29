@@ -56,6 +56,7 @@ class ControllerInput:
     proposed_execution: str
     previous_controller_decisions: list[dict[str, Any]]
     context_complete: bool
+    context_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

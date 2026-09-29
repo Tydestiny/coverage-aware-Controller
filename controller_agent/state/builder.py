@@ -22,6 +22,7 @@ class StateBuilder:
         proposed_execution: str,
         previous_controller_decisions: Iterable[dict[str, Any]],
         context_complete: bool,
+        context_metadata: dict[str, Any] | None = None,
     ) -> ControllerInput:
         """Return a deep-copied, complete causal Controller input."""
         if not isinstance(task, str):
@@ -42,6 +43,7 @@ class StateBuilder:
             proposed_execution=proposed_execution,
             previous_controller_decisions=_copy_records(previous_controller_decisions),
             context_complete=context_complete,
+            context_metadata=copy.deepcopy(context_metadata or {}),
         )
 
 

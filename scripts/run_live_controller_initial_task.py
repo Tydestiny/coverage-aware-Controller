@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -15,16 +16,18 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from controller_agent.controller.controller import Controller
+from controller_agent.paths import git_commit, official_task_ids
 from controller_agent.controller.live_llm_backend import DEFAULT_MODEL as DEFAULT_CONTROLLER_MODEL
 from controller_agent.controller.live_llm_backend import LiveLLMBackend
 from controller_agent.branching.branch_runtime_logger import BranchRuntimeLogger
+from controller_agent.branching.checkpoint_capture_hook import RuntimeCheckpointCaptureHook
 from controller_agent.integration.appworld_adapter import ControlledAppWorldRunner, RunnerBudget
 from controller_agent.integration.controlled_react_agent import ControlledReActAgent
 from controller_agent.integration.openrouter_response_normalizer import (
     install_agent_generate_normalizer,
     install_openrouter_response_normalizer,
 )
-from controller_agent.logging.logger import ExperimentLogger
+from controller_agent.logging.logger import ExperimentLogger, summarize_trigger_events
 from controller_agent.results.token_usage import build_end_to_end_token_usage
 from controller_agent.state.schemas import ControllerConfig
 from controller_agent.triggers.composite import CompositeTriggerDetectorWithBudget
@@ -38,6 +41,7 @@ from scripts.run_controller_api_smoke import (
     sanitize_messages,
     write_json,
     write_jsonl,
+    read_text_if_exists,
 )
 from scripts.run_checkpoint_restore_continue import ensure_appworld_agents_package
 
@@ -45,8 +49,9 @@ from scripts.run_checkpoint_restore_continue import ensure_appworld_agents_packa
 def parse_args() -> argparse.Namespace:
     """Parse the fixed single-task live run configuration."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--task-id", default="50e1ac9_1")
-    parser.add_argument("--dataset-name", default="dev")
+    parser.add_argument("--task-id", required=True)
+    parser.add_argument("--execute", action="store_true", help="Required for real model calls")
+    parser.add_argument("--dataset-name", choices=("train", "dev"), required=True)
     parser.add_argument("--split", default=None)
     parser.add_argument("--branch", choices=("baseline", "controller"), default="controller")
     parser.add_argument("--disable-controller", action="store_true")
@@ -56,8 +61,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--controller-api-key-env", default="OPENROUTER_API_KEY")
     parser.add_argument("--controller-system-prompt", default=None)
     parser.add_argument("--seed", type=int, default=20260722)
-    parser.add_argument("--experiment-name", default="controller_live_initial_50e1ac9_1")
-    parser.add_argument("--output-dir", default=str(REPO_ROOT / "results" / "controller_initial_50e1ac9_1"))
+    parser.add_argument("--experiment-name", required=True)
+    parser.add_argument("--output-dir", required=True)
     parser.add_argument("--appworld-root", default=str(REPO_ROOT.parent / "appworld"))
     parser.add_argument("--max-agent-turns", type=int, default=10000)
     parser.add_argument("--max-environment-executions", type=int, default=10000)
@@ -74,6 +79,7 @@ def parse_args() -> argparse.Namespace:
         help="Maximum guidance injections per task; later proposed actions execute normally.",
     )
     parser.add_argument("--max-trigger-calls", type=int, default=10_000)
+    parser.add_argument("--trigger-profile", choices=("before_finish", "all"), default="all")
     parser.add_argument(
         "--max-consecutive-identical-executions",
         type=int,
@@ -87,15 +93,27 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     """Run one task from its initial state and persist controller audit files."""
     args = parse_args()
+    if not args.execute:
+        raise SystemExit("Real model calls require --execute")
+    if args.dataset_name not in {"train", "dev"}:
+        raise SystemExit("This development entry point accepts only train/dev tasks")
+    if not args.disable_controller and not args.controller_system_prompt:
+        raise SystemExit("Controller runs require --controller-system-prompt")
+    prompt_hash = (
+        hashlib.sha256(Path(args.controller_system_prompt).read_bytes()).hexdigest()
+        if not args.disable_controller else None
+    )
     appworld_root = Path(args.appworld_root).resolve()
+    if args.task_id not in official_task_ids(appworld_root, args.dataset_name):
+        raise SystemExit(f"{args.task_id} is not in the official {args.dataset_name} split")
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     selection = {
         "dataset_name": args.dataset_name,
         "task_id": args.task_id,
         "selection_seed": None,
-        "selection_reason": "First dev task without an existing current Controller smoke result; fixed before execution.",
-        "excluded_task_ids": ["287e338_1"],
+        "selection_reason": "Explicitly selected train/dev task before execution.",
+        "excluded_task_ids": [],
         "execution_mode": "initial_state",
     }
     write_json(output_dir / "task_selection.json", selection)
@@ -103,17 +121,22 @@ def main() -> int:
     os.environ["APPWORLD_ROOT"] = str(appworld_root)
     os.environ.setdefault("MODEL_SERVER_URL", API_ENDPOINT)
 
+    enabled_triggers = ["before_finish"] if args.trigger_profile == "before_finish" else [
+        "before_finish", "before_write", "no_progress"
+    ]
+    task_output_dir = appworld_root / "experiments" / "outputs" / args.experiment_name / "tasks" / args.task_id
     config = {
         "task_id": args.task_id,
         "dataset_name": args.dataset_name,
         "experiment_name": args.experiment_name,
         "agent_name": AGENT_NAME,
         "agent_model": args.agent_model,
-        "controller_model": args.controller_model,
+        "controller_model": None if args.disable_controller else args.controller_model,
         "controller_backend": "LiveLLMBackend",
         "controller_system_prompt": args.controller_system_prompt,
+        "controller_prompt_sha256": prompt_hash,
         "context_policy": "FULL_CONTEXT",
-        "enabled_triggers": ["before_finish", "before_write", "no_progress"],
+        "enabled_triggers": [] if args.disable_controller else enabled_triggers,
         "branch": args.branch,
         "split": args.split,
         "seed": args.seed,
@@ -124,16 +147,27 @@ def main() -> int:
         "max_consecutive_identical_executions": args.max_consecutive_identical_executions,
         "max_cost_cny": args.max_cost_cny,
         "api_endpoint": API_ENDPOINT,
+        "controller_endpoint": None if args.disable_controller else args.controller_base_url,
+        "checkpoint_directory": str(task_output_dir / "checkpoints"),
+        "controller_temperature": None if args.disable_controller else 0.0,
+        "controller_max_output_tokens": None if args.disable_controller else 512,
+        "controller_timeout_seconds": None if args.disable_controller else 60.0,
+        "controller_thinking": False if args.controller_model in {"deepseek-v4-pro", "deepseek-v4-flash"} else None,
     }
     write_json(output_dir / "run_summary.json", {"config": config, "status": "started"})
     print(json.dumps({key: value for key, value in config.items() if key != "api_key"}, ensure_ascii=False, indent=2))
 
     agent_args = argparse.Namespace(
+        seed=args.seed,
         max_cost_cny=args.max_cost_cny,
         max_agent_turns=args.max_agent_turns,
         max_extra_agent_turns_after_block=10000,
     )
     agent_config = build_agent_config(agent_args, appworld_root, args.agent_model)
+    config["agent_temperature"] = agent_config["model_config"]["temperature"]
+    config["agent_decoding_seed"] = agent_config["model_config"]["seed"]
+    config["agent_max_output_tokens"] = agent_config["model_config"].get("max_completion_tokens")
+    config["appworld_random_seed"] = agent_config["appworld_config"]["random_seed"]
     agent_config["max_steps"] = None
     agent_config["usage_tracker_config"]["max_output_tokens_per_task"] = float("inf")
     base_agent = None
@@ -143,6 +177,14 @@ def main() -> int:
         output_dir,
         branch=args.branch,
         checkpoint_last_step=-1,
+    )
+    checkpoint_hook = RuntimeCheckpointCaptureHook(
+        root_dir=output_dir,
+        run_id=args.experiment_name,
+        task_id=args.task_id,
+        appworld_code_version=read_text_if_exists(appworld_root / "version" / "code.txt"),
+        appworld_data_version=read_text_if_exists(appworld_root / "version" / "data.txt"),
+        base_dir=task_output_dir / "checkpoints",
     )
     summary: dict[str, Any] = {"config": config, "status": "error"}
     evaluator_result: dict[str, Any] = {}
@@ -163,7 +205,8 @@ def main() -> int:
             install_agent_generate_normalizer(base_agent)
         trigger_config = TriggerConfig(
             budget=TriggerBudgetConfig(
-                detector_order=("before_finish", "before_write", "no_progress"),
+                detector_order=("before_finish",) if args.trigger_profile == "before_finish" else
+                               ("before_finish", "before_write", "no_progress"),
                 max_triggers_per_task=args.max_trigger_calls,
                 min_before_finish_triggers=1,
             )
@@ -199,6 +242,8 @@ def main() -> int:
                 max_consecutive_identical_executions=args.max_consecutive_identical_executions,
             ),
             branch_runtime_logger=branch_runtime_logger,
+            controller_prompt_hash=prompt_hash,
+            checkpoint_capture_hook=checkpoint_hook,
         )
         world = None
         with AppWorld.initializer(
@@ -222,6 +267,7 @@ def main() -> int:
             "controller_calls": controlled.runtime_state.total_calls,
             "controller_blocks": controlled.runtime_state.total_blocks,
             "close_error": close_error,
+            "checkpoint_capture_errors": runner.checkpoint_hook_errors,
             "wall_time_seconds": time.perf_counter() - started,
         }
     except Exception as exc:
@@ -254,7 +300,9 @@ def main() -> int:
     controller_events = sanitize_messages(logger.events)
     write_jsonl(output_dir / "turn_events.jsonl", events)
     write_jsonl(output_dir / "controller_events.jsonl", controller_events)
+    write_jsonl(output_dir / "trigger_events.jsonl", logger.trigger_events)
     summary["event_count"] = len(events)
+    summary.update(summarize_trigger_events(logger.trigger_events))
     summary["controller_event_count"] = len(controller_events)
     summary["archived_raw_logs"] = archived_raw_logs
     write_json(output_dir / "run_summary.json", summary)
@@ -267,7 +315,17 @@ def main() -> int:
             "split": args.split,
             "seed": args.seed,
             "agent_model": args.agent_model,
-            "controller_model": args.controller_model,
+            "controller_model": None if args.disable_controller else args.controller_model,
+            "appworld_task_output": str(task_output_dir),
+            "checkpoint_directory": str(task_output_dir / "checkpoints"),
+            "appworld_code_version": checkpoint_hook.manager.appworld_code_version,
+            "appworld_data_version": checkpoint_hook.manager.appworld_data_version,
+            "controller_prompt_sha256": prompt_hash,
+            "controller_code_commit": git_commit(REPO_ROOT),
+            "appworld_code_commit": git_commit(appworld_root),
+            "trigger_profile": args.trigger_profile,
+            "max_controller_calls": args.max_controller_calls,
+            "max_controller_blocks": args.max_controller_blocks,
             "appworld_experiment": args.experiment_name,
         },
     )

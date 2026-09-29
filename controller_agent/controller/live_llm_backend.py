@@ -1,4 +1,4 @@
-"""Live LLM Controller backend using Prompt G0.
+"""Live LLM Controller backend using an explicitly selected system prompt.
 
 Calls an OpenAI-compatible chat API (e.g. DashScope) and returns model text
 that `Controller` can parse into a validated `ControllerResponse`.
@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from controller_agent.controller.policy_g0 import load_g0_system_prompt, render_g0_user_prompt
+from controller_agent.controller.input_renderer import render_controller_input
 from controller_agent.state.schemas import ControllerInput, ControllerResponse, response_from_mapping
 
 
@@ -146,7 +146,7 @@ def remove_confidence_field(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class LiveLLMBackend:
-    """Prompt-G0 LLM backend for the Coverage-Aware Controller.
+    """LLM backend for the Coverage-Aware Controller.
 
     Typical use::
 
@@ -183,7 +183,7 @@ class LiveLLMBackend:
     def decide(self, controller_input: ControllerInput) -> ControllerResponse:
         """Call the model and wrap a parsed decision with usage metadata."""
         system_prompt = self._load_system_prompt()
-        user_prompt = render_g0_user_prompt(controller_input)
+        user_prompt = render_controller_input(controller_input)
 
         result = self.call_model_fn(
             system_prompt=system_prompt,
@@ -208,9 +208,9 @@ class LiveLLMBackend:
         )
 
     def _load_system_prompt(self) -> str:
-        """Load an explicitly configured prompt or retain the G0 default."""
+        """Load the frozen prompt selected for this run."""
         if self.system_prompt_path is None:
-            return load_g0_system_prompt()
+            raise ValueError("A versioned controller system prompt is required for live runs")
         return self.system_prompt_path.read_text(encoding="utf-8")
 
 

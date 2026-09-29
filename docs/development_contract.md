@@ -1,6 +1,6 @@
 # Coverage-Aware Controller Development Contract
 
-This document freezes the public core for the current Coverage-Aware Controller engineering version. The core has passed mock tests and a real Agent API smoke test through the AppWorld integration runner.
+Core changes require explicit review and offline regression tests. Historical real API smoke tests do not validate later changes; the current input revision has offline coverage only.
 
 ## Stable Public Interfaces
 
@@ -15,7 +15,7 @@ The following files are stable core interfaces:
 Public contracts:
 
 - `TriggerDetector.detect(context: TriggerContext) -> TriggerResult`
-- `StateBuilder.build(task, trigger, recent_history, current_agent_output) -> ControllerInput`
+- `StateBuilder.build(task, trigger, agent_context_messages, proposed_agent_output, proposed_execution, previous_controller_decisions, context_complete, context_metadata=None) -> ControllerInput`
 - `Controller.decide(controller_input: ControllerInput) -> ControllerResponse`
 - `GuidanceBuilder.build(decision: ControllerDecision) -> str`
 - `ControlledReActAgent.inspect_proposed_execution(...) -> InterceptionResult`
@@ -33,7 +33,7 @@ Public contracts:
 
 `state/`
 
-- Input: task text, trigger result, recent visible messages, proposed execution.
+- Input: task text, trigger result, complete captured current-task messages, proposed output/code, prior decisions, context provenance.
 - Output: `ControllerInput`
 - Constraint: do not include evaluator state, ground truth answer, hidden database state, or future observations.
 
@@ -96,10 +96,10 @@ The Controller must not receive:
 The Controller may receive:
 
 - Original task text.
-- Recent visible Agent messages.
+- Captured current-task Agent messages.
 - Current proposed execution code.
 - Previous visible tool outputs.
-- Deterministically extracted entities, completed operations, and recent visible errors.
+- Prior decisions linked to actually executed actions and observations.
 - Runtime counters such as controller calls and blocks.
 
 ## Ownership Guidance

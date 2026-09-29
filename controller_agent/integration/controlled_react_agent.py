@@ -17,6 +17,7 @@ from controller_agent.controller.guidance import GuidanceBuilder
 from controller_agent.integration.base import ExecutionInterceptionAdapter, OfflineMockAdapter
 from controller_agent.logging.logger import ExperimentLogger
 from controller_agent.state.builder import StateBuilder
+from controller_agent.state.context_capture import capture_context
 from controller_agent.state.schemas import (
     Action,
     ControllerConfig,
@@ -69,14 +70,20 @@ class ControlledReActAgent:
         self._agent_context_messages: list[dict[str, Any]] = []
         self._agent_context_complete = False
         self._previous_controller_decisions: list[dict[str, Any]] = []
-        self._pending_decision_index: int | None = None
+        self._pending_execution: dict[str, Any] | None = None
+        self._context_metadata: dict[str, Any] = {}
+        self._generation_message_count: int | None = None
+        self._trigger_history: list[dict[str, Any]] = []
+        self._pending_trigger_action: str | None = None
 
     def next_execution_inputs_usage_and_status(self, last_execution_outputs: Sequence[Any]) -> Any:
         """Delegate one Agent turn and inspect only proposed execution."""
-        self.last_interception_result = None
-        self.last_controller_input = None
         self._reset_if_task_changed(self._task_id())
         self._record_previous_execution_result(last_execution_outputs)
+        self._record_trigger_observation(last_execution_outputs)
+        self.last_interception_result = None
+        self.last_controller_input = None
+        self._generation_message_count = len(getattr(self.agent, "messages", []))
         with self._capture_agent_context_messages():
             result = self.agent.next_execution_inputs_usage_and_status(last_execution_outputs)
         if not self.config.enabled:
@@ -87,6 +94,13 @@ class ControlledReActAgent:
         context = self._build_trigger_context(execution_inputs, last_execution_outputs)
         interception = self.inspect_proposed_execution(context, result, execution_inputs)
         self.last_interception_result = interception
+        if interception.allow_execution:
+            self._pending_trigger_action = context.proposed_execution
+            self._pending_execution = {
+                "step_number": context.step_index,
+                "executed_code": [str(getattr(item, "content", "")) for item in execution_inputs],
+                "decision_index": len(self._previous_controller_decisions) - 1,
+            }
         if interception.trigger_result is None:
             return result
         return self.integration_adapter.apply(result, interception, self.agent)
@@ -103,9 +117,15 @@ class ControlledReActAgent:
         except Exception as exc:
             self._log_fail_open(context, "trigger_failure", exc)
             return InterceptionResult(True, original_result, original_execution_inputs)
+        budget_bypassed = trigger.should_call_controller and (
+            self._controller_call_limit_reached()
+            or self._consecutive_block_limit_reached()
+            or self._controller_block_limit_reached()
+        )
+        self.logger.log_trigger_evaluation(context, trigger, controller_budget_bypassed=budget_bypassed)
         if not trigger.should_call_controller:
             return InterceptionResult(True, original_result, original_execution_inputs, trigger_result=None)
-        if self._controller_call_limit_reached() or self._consecutive_block_limit_reached():
+        if budget_bypassed:
             self._log_fail_open(context, "controller_budget_exhausted", None, trigger)
             return InterceptionResult(True, original_result, original_execution_inputs, trigger_result=trigger)
 
@@ -118,6 +138,8 @@ class ControlledReActAgent:
                 proposed_execution=context.proposed_execution,
                 previous_controller_decisions=self._previous_controller_decisions,
                 context_complete=self._agent_context_complete,
+                context_metadata={**self._context_metadata, "task_id": context.task_id,
+                                  "step_number": context.step_index},
             )
             self.last_controller_input = controller_input
             response = self.controller.decide(controller_input)
@@ -161,11 +183,16 @@ class ControlledReActAgent:
         self._agent_context_messages = []
         self._agent_context_complete = False
         self._previous_controller_decisions.clear()
-        self._pending_decision_index = None
+        self._pending_execution = None
+        self._context_metadata = {}
+        self._generation_message_count = None
+        self._trigger_history.clear()
+        self._pending_trigger_action = None
         reset = getattr(self.trigger_detector, "reset", None)
         if callable(reset):
             reset()
         self.logger.events.clear()
+        self.logger.trigger_events.clear()
 
     def _build_trigger_context(self, execution_inputs: Sequence[Any], last_execution_outputs: Sequence[Any]) -> TriggerContext:
         """Build trigger context from visible wrapped-agent state."""
@@ -175,15 +202,28 @@ class ControlledReActAgent:
             task=self._task_text(),
             proposed_execution=str(getattr(execution_inputs[0], "content", "")),
             last_execution_outputs=list(last_execution_outputs),
-            recent_history=copy.deepcopy(self._agent_context_messages),
+            recent_history=copy.deepcopy(self._trigger_history),
             runtime_state=self.runtime_state.to_dict(),
         )
+
+    def _record_trigger_observation(self, outputs: Sequence[Any]) -> None:
+        """Pair an executed candidate with its following environment output."""
+        if self._pending_trigger_action is None:
+            return
+        self._trigger_history.append({
+            "proposed_execution": self._pending_trigger_action,
+            "last_execution_outputs": [getattr(output, "content", output) for output in outputs],
+        })
+        self._pending_trigger_action = None
+        self._trigger_history = self._trigger_history[-20:]
 
     @contextmanager
     def _capture_agent_context_messages(self) -> Any:
         """Capture only the current task runtime view of the Agent model call."""
         self._agent_context_messages = []
         self._agent_context_complete = False
+        self._context_metadata = {"source": "unavailable", "incomplete_reasons": ["model_input_not_captured"]}
+        capture_count = 0
         language_model = getattr(self.agent, "language_model", None)
         original_generate = getattr(language_model, "generate", None)
         if not callable(original_generate):
@@ -191,13 +231,24 @@ class ControlledReActAgent:
             return
 
         def capture_generate(*args: Any, **kwargs: Any) -> Any:
+            nonlocal capture_count
+            capture_count += 1
             messages = kwargs.get("messages")
             if messages is None and args:
                 messages = args[0]
             if isinstance(messages, list) and all(isinstance(message, dict) for message in messages):
-                runtime_messages = self._controller_runtime_messages(messages)
-                self._agent_context_messages = copy.deepcopy(runtime_messages)
-                self._agent_context_complete = not _contains_agent_truncation_marker(runtime_messages)
+                self._agent_context_messages, self._agent_context_complete, self._context_metadata = capture_context(
+                    messages, getattr(self.agent, "messages", None),
+                    getattr(self.agent, "num_instruction_messages", None),
+                )
+                self._context_metadata["capture_count"] = capture_count
+                if capture_count > 1:
+                    self._agent_context_complete = False
+                    self._context_metadata["incomplete_reasons"].append("multiple_generations_in_one_turn")
+            else:
+                self._agent_context_messages = []
+                self._agent_context_complete = False
+                self._context_metadata = {"source": "unavailable", "incomplete_reasons": ["invalid_messages"]}
             return original_generate(*args, **kwargs)
 
         setattr(language_model, "generate", capture_generate)
@@ -217,13 +268,30 @@ class ControlledReActAgent:
         return [messages[boundary - 1], *messages[boundary:]]
 
     def _record_previous_execution_result(self, outputs: Sequence[Any]) -> None:
-        """Attach the next observed environment output to the prior decision."""
-        if self._pending_decision_index is None or not outputs:
+        """Support wrappers that deliver observations on the next generation."""
+        if outputs:
+            self.record_environment_execution(outputs)
+        else:
+            self._pending_execution = None
+
+    def record_environment_execution(self, outputs: Sequence[Any]) -> None:
+        """Attach actual execution feedback once, without inferring guidance success."""
+        pending = self._pending_execution
+        self._pending_execution = None
+        if pending is None or pending["decision_index"] < 0:
             return
-        self._previous_controller_decisions[self._pending_decision_index]["execution_result"] = copy.deepcopy(
-            [getattr(output, "content", output) for output in outputs]
-        )
-        self._pending_decision_index = None
+        decision = self._previous_controller_decisions[pending["decision_index"]]
+        observed = copy.deepcopy([getattr(output, "content", output) for output in outputs])
+        execution = {
+            "step_number": pending["step_number"],
+            "executed_code": pending["executed_code"],
+            "observation": observed,
+        }
+        if not decision["blocked"] and decision["step_number"] == pending["step_number"]:
+            decision["original_execution_status"] = "executed"
+            decision["execution_result"] = observed
+        else:
+            decision["subsequent_executions"].append(execution)
 
     def _append_controller_decision(
         self,
@@ -237,6 +305,8 @@ class ControlledReActAgent:
         self._previous_controller_decisions.append(
             {
                 "step_index": context.step_index,
+                "step_number": context.step_index,
+                "proposed_execution": context.proposed_execution,
                 "trigger_reason": trigger.reason,
                 "trigger_metadata": copy.deepcopy(trigger.metadata),
                 "action": response.decision.action.value,
@@ -245,13 +315,17 @@ class ControlledReActAgent:
                 "guidance": guidance,
                 "blocked": blocked,
                 "execution_result": None,
+                "original_execution_status": "blocked" if blocked else "allowed_pending_execution",
+                "subsequent_executions": [],
             }
         )
-        self._pending_decision_index = len(self._previous_controller_decisions) - 1
 
     def _latest_assistant_output(self, fallback: str) -> str:
         """Return the complete latest assistant message, falling back to code."""
-        for message in reversed(list(getattr(self.agent, "messages", []))):
+        messages = list(getattr(self.agent, "messages", []))
+        if self._generation_message_count is not None:
+            messages = messages[self._generation_message_count:]
+        for message in reversed(messages):
             if isinstance(message, dict) and str(message.get("role", "")).lower() == "assistant":
                 content = message.get("content")
                 if isinstance(content, str) and content:
@@ -337,18 +411,3 @@ def _before_finish_composite() -> CompositeTriggerDetectorWithBudget:
         )
     )
     return CompositeTriggerDetectorWithBudget(full_config=config)
-
-
-_AGENT_CONTEXT_TRUNCATION_MARKERS = ("[TRIMMED HISTORY]", "[NOT SHOWN FOR BREVITY]")
-
-
-def _contains_agent_truncation_marker(messages: list[dict[str, Any]]) -> bool:
-    """Return whether AppWorld marked any Agent-visible history as abbreviated."""
-    return any(
-        marker in content
-        for message in messages
-        if isinstance(message, dict)
-        for content in (message.get("content"),)
-        if isinstance(content, str)
-        for marker in _AGENT_CONTEXT_TRUNCATION_MARKERS
-    )

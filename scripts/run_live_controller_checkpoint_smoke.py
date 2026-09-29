@@ -29,9 +29,8 @@ from controller_agent.integration.openrouter_response_normalizer import (
 from controller_agent.branching.namespace_restore import reset_world_interaction_logs, restore_python_namespace_from_prefix
 from controller_agent.controller.controller import Controller
 from controller_agent.controller.live_llm_backend import LiveLLMBackend
-from controller_agent.controller.policy_g0 import load_g0_system_prompt
 from controller_agent.integration.appworld_adapter import AppWorldInterceptionApplied, ControlledAppWorldRunner, RunnerBudget
-from controller_agent.integration.controlled_react_agent import ControlledReActAgent, _contains_agent_truncation_marker
+from controller_agent.integration.controlled_react_agent import ControlledReActAgent
 from controller_agent.logging.logger import ExperimentLogger
 from controller_agent.state.schemas import ControllerConfig
 from controller_agent.state.schemas import TriggerResult
@@ -90,7 +89,7 @@ def parse_args() -> argparse.Namespace:
     """Parse the one-run live Controller smoke configuration."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--execute", action="store_true")
-    parser.add_argument("--task-id", default="287e338_1")
+    parser.add_argument("--task-id", required=True)
     parser.add_argument("--agent-model", default="qwen3-coder-flash-2025-07-28")
     parser.add_argument("--controller-model", default=DEFAULT_CONTROLLER_MODEL)
     parser.add_argument("--controller-base-url", default=None)
@@ -98,23 +97,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--controller-system-prompt",
         default=None,
-        help="Optional system-prompt file for LiveLLMBackend.",
+        help="Required for live Controller calls; no historical prompt is selected automatically.",
     )
-    parser.add_argument("--checkpoint-id", default="287e338_1_post_0008")
-    parser.add_argument(
-        "--source-task-dir",
-        default=str(
-            REPO_ROOT.parent
-            / "appworld"
-            / "experiments"
-            / "outputs"
-            / "controlled_react_checkpoint_collection"
-            / "tasks"
-            / "287e338_1"
-        ),
-    )
+    parser.add_argument("--checkpoint-id", required=True)
+    parser.add_argument("--source-task-dir", required=True)
     parser.add_argument("--appworld-root", default=str(REPO_ROOT.parent / "appworld"))
-    parser.add_argument("--output-dir", default=str(REPO_ROOT / "results" / "controller_live_checkpoint_smoke"))
+    parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-agent-turns", type=int, default=10_000)
     parser.add_argument("--max-environment-executions", type=int, default=10_000)
     parser.add_argument("--max-controller-calls", type=int, default=10_000)
@@ -160,7 +148,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional original readable logger used to prepend the shared checkpoint prefix.",
     )
-    parser.add_argument("--experiment-name", default="controller_live_checkpoint_smoke")
+    parser.add_argument("--experiment-name", required=True)
     parser.add_argument("--seed", type=int, default=100)
     return parser.parse_args()
 
@@ -168,6 +156,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     """Restore one checkpoint and execute the existing controlled runner once."""
     args = parse_args()
+    if args.execute and not args.disable_controller and not args.controller_system_prompt:
+        raise SystemExit("Controller runs require --controller-system-prompt")
     appworld_root = Path(args.appworld_root).resolve()
     source_task_dir = Path(args.source_task_dir).resolve()
     output_dir = Path(args.output_dir).resolve()
@@ -234,6 +224,7 @@ def main() -> int:
         install_openrouter_response_normalizer()
 
     agent_args = argparse.Namespace(
+        seed=args.seed,
         max_cost_cny=args.max_cost_cny,
         max_agent_turns=args.max_agent_turns,
         max_extra_agent_turns_after_block=10_000,
@@ -310,7 +301,7 @@ def main() -> int:
             (
                 Path(args.controller_system_prompt).read_text(encoding="utf-8")
                 if args.controller_system_prompt
-                else load_g0_system_prompt()
+                else ""
             ).encode("utf-8")
         ).hexdigest(),
     )
@@ -412,6 +403,7 @@ def main() -> int:
     }
     write_jsonl(output_dir / "turn_events.jsonl", events)
     write_jsonl(output_dir / "controller_events.jsonl", controller_events)
+    write_jsonl(output_dir / "trigger_events.jsonl", logger.trigger_events)
     write_jsonl(output_dir / "sanitized_messages.jsonl", messages)
     if args.retain_smoke_artifacts:
         write_json(output_dir / "controller_response.json", response_data)
@@ -538,7 +530,13 @@ def _run_cached_pre_action(
     # wrapper with the exact pre-generation messages captured from lm_calls.
     runtime_messages = controlled._controller_runtime_messages(captured_messages)
     controlled._agent_context_messages = copy.deepcopy(runtime_messages)
-    controlled._agent_context_complete = not _contains_agent_truncation_marker(runtime_messages)
+    controlled._agent_context_complete = False
+    controlled._context_metadata = {
+        "source": "cached_pre_action_audit",
+        "incomplete_reasons": ["live_request_not_captured"],
+        "provider_payload_verified": False,
+        "proposed_execution_status": "not_executed",
+    }
     controlled.runtime_state.agent_turn_count = 1
     execution_inputs = [execution_io_type(content=code, metadata={})]
     context = controlled._build_trigger_context(execution_inputs, [])

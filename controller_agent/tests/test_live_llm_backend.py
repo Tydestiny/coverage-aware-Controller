@@ -57,10 +57,13 @@ def test_live_backend_loads_explicit_system_prompt(tmp_path) -> None:
     assert captured["system_prompt"] == "G1 system prompt"
 
 
-def test_live_backend_renders_controller_input_in_explicit_model_visible_order() -> None:
+def test_live_backend_renders_controller_input_in_explicit_model_visible_order(tmp_path) -> None:
     """The actual user prompt places current task and proposed action at the required positions."""
     captured = {}
+    prompt_file = tmp_path / "prompt.txt"
+    prompt_file.write_text("Development prompt", encoding="utf-8")
     backend = LiveLLMBackend(
+        system_prompt_path=prompt_file,
         call_model_fn=lambda **kwargs: captured.update(kwargs) or {"text": '{"action":"PROCEED","reason":"ok"}'},
     )
     backend.decide(
@@ -73,6 +76,7 @@ def test_live_backend_renders_controller_input_in_explicit_model_visible_order()
             proposed_execution="EXECUTION_VALUE",
             previous_controller_decisions=[{"action": "DECISION_VALUE"}],
             context_complete=True,
+            context_metadata={"scope": "current_task", "request_sha256": "synthetic-hash"},
         )
     )
 
@@ -82,6 +86,7 @@ def test_live_backend_renders_controller_input_in_explicit_model_visible_order()
         "## trigger_reason",
         "## trigger_metadata",
         "## context_complete",
+        "## context_metadata",
         "## agent_context_messages",
         "## previous_controller_decisions",
         "## proposed_agent_output",
@@ -90,6 +95,17 @@ def test_live_backend_renders_controller_input_in_explicit_model_visible_order()
     assert [prompt.index(heading) for heading in headings] == sorted(prompt.index(heading) for heading in headings)
     assert prompt.index("TASK_VALUE") < prompt.index("HISTORY_VALUE") < prompt.index("OUTPUT_VALUE") < prompt.index("EXECUTION_VALUE")
     assert "case_type_hint" not in prompt
+    assert "synthetic-hash" not in prompt
+    assert "current_task" in prompt
+
+
+def test_live_backend_requires_explicit_prompt() -> None:
+    """Historical prompts must not be selected implicitly."""
+    import pytest
+
+    backend = LiveLLMBackend(call_model_fn=lambda **kwargs: pytest.fail("Model called"))
+    with pytest.raises(ValueError, match="versioned controller system prompt"):
+        backend.decide(ControllerInput("task", "before_finish", {}, [], "output", "code", [], True))
 
 
 def test_deepseek_v4_controller_explicitly_disables_thinking(monkeypatch: object) -> None:

@@ -8,62 +8,43 @@ matches the historically hard-coded values.
 
 from __future__ import annotations
 
-import re
+import ast
 
 from controller_agent.state.schemas import TriggerContext, TriggerResult
+from controller_agent.triggers.code import python_spans
 from controller_agent.triggers.config import DEFAULT_CONFIG, BeforeWriteConfig
 
-# Matches an identifier (possibly dot/underscore chained) followed by "(".
-# Greedy so that "apis.orders.delete(" captures the whole chain as group(1).
-_API_CALL_RE = re.compile(r"([a-z_][a-z0-9_]*(?:[._][a-z_][a-z0-9_]*)*)\s*\(", re.IGNORECASE)
-
-
-def _extract_api_name(code: str, keywords: frozenset[str]) -> str | None:
-    """Return the first high-risk action name in ``code``, or None.
-
-    Splits the matched identifier on dots and underscores, then checks each
-    full token (not partial substrings) against the keyword set.
-    """
-    m = _API_CALL_RE.search(code)
-    if m is None:
+def _extract_api_call(code: str, keywords: frozenset[str]) -> tuple[str, ast.Call] | None:
+    """Find the first high-risk AppWorld API call in parsed Python code."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
         return None
-    raw = m.group(1)
-    for part in re.split(r"[._]", raw, flags=re.IGNORECASE):
-        if part.lower() in keywords:
-            return part.lower()
+    for node in sorted(
+        (item for item in ast.walk(tree) if isinstance(item, ast.Call)),
+        key=lambda item: (item.lineno, item.col_offset),
+    ):
+        parts: list[str] = []
+        target = node.func
+        while isinstance(target, ast.Attribute):
+            parts.append(target.attr)
+            target = target.value
+        if isinstance(target, ast.Name):
+            parts.append(target.id)
+        parts.reverse()
+        if len(parts) < 3 or parts[0] != "apis":
+            continue
+        for part in parts[-1].split("_"):
+            if part.lower() in keywords:
+                return part.lower(), node
     return None
 
 
-def _params_preview(code: str, api_name: str, limit: int) -> str:
-    """Extract a short preview of the parameters passed to ``api_name``."""
-    api_lower = api_name.lower()
-    code_lower = code.lower()
-
-    api_pos = code_lower.find(api_lower)
-    if api_pos == -1:
-        return ""
-
-    paren_pos = code.find("(", api_pos)
-    if paren_pos == -1:
-        return ""
-
-    depth = 0
-    for i in range(paren_pos, len(code)):
-        c = code[i]
-        if c == "(":
-            depth += 1
-        elif c == ")":
-            depth -= 1
-            if depth == 0:
-                preview = code[paren_pos : i + 1]
-                if len(preview) > limit:
-                    return preview[:limit] + "..."
-                return preview
-
-    preview = code[paren_pos:]
-    if len(preview) > limit:
-        return preview[:limit] + "..."
-    return preview
+def _params_preview(code: str, call: ast.Call, limit: int) -> str:
+    """Return arguments for the matched call, not an earlier text occurrence."""
+    segment = ast.get_source_segment(code, call) or ""
+    preview = segment[segment.find("("):] if "(" in segment else ""
+    return preview[:limit] + "..." if len(preview) > limit else preview
 
 
 class BeforeWriteTrigger:
@@ -78,19 +59,15 @@ class BeforeWriteTrigger:
         if not code.strip():
             return TriggerResult(False, "before_write_empty_execution")
 
-        api_name = _extract_api_name(code, self._config.high_risk_keywords)
-        if api_name is None:
-            return TriggerResult(False, "before_write_not_triggered")
-
-        return TriggerResult(
-            True,
-            "before_write",
-            {
+        for source, _ in python_spans(code):
+            matched = _extract_api_call(source, self._config.high_risk_keywords)
+            if matched is None:
+                continue
+            api_name, call = matched
+            return TriggerResult(True, "before_write", {
                 "trigger": "before_write",
                 "api_name": api_name,
-                "params_preview": _params_preview(
-                    code, api_name, self._config.params_preview_limit
-                ),
+                "params_preview": _params_preview(source, call, self._config.params_preview_limit),
                 "task_id": context.task_id,
-            },
-        )
+            })
+        return TriggerResult(False, "before_write_not_triggered")

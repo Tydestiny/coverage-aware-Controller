@@ -5,7 +5,8 @@ State modules define the public data contracts and build the Controller-visible 
 Stable files:
 
 - `schemas.py`: frozen dataclasses and action enum.
-- `builder.py`: conservative visible-state extraction.
+- `builder.py`: deep-copy Controller input; no semantic extraction or summary.
+- `context_capture.py`: qualify the model-request snapshot and its task boundary.
 
 Stable outputs:
 

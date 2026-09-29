@@ -9,6 +9,8 @@ historically hard-coded values.
 
 from __future__ import annotations
 
+import ast
+import json
 import re
 
 from controller_agent.state.schemas import TriggerContext, TriggerResult
@@ -18,14 +20,34 @@ from controller_agent.triggers.config import DEFAULT_CONFIG, NoProgressConfig
 # Error fingerprinting helpers
 # ----------------------------------------------------------------------
 
-# Default HTTP 4xx/5xx regex.  Compiled once at module import time for the
-# common case; triggers constructed with a custom config use the shared
-# regex from :func:`_build_fingerprinters`.
-_HTTP_RE = re.compile(r"\b[45]\d\d\b", re.IGNORECASE)
+# Require HTTP/status context so ordinary numeric results are not errors.
+_HTTP_RE = re.compile(
+    r"\b(?:HTTP(?:/\d(?:\.\d)?)?|status(?:_code|\s+code)?)\s*[:=]?\s*([45]\d\d)\b",
+    re.IGNORECASE,
+)
 
 
 # Matches individual identifier tokens (letters/digits/underscores).
 _TOKEN_RE = re.compile(r"\b[a-z_][a-z0-9_]*\b", re.IGNORECASE)
+
+
+def _structured_error(value: object) -> str | None:
+    """Read explicit failure fields without interpreting arbitrary result text."""
+    if isinstance(value, list):
+        return next((error for item in value if (error := _structured_error(item))), None)
+    if not isinstance(value, dict):
+        return None
+    code = value.get("status_code", value.get("status"))
+    if re.fullmatch(r"[45]\d\d", str(code)):
+        return "http:" + str(code)
+    error = value.get("error")
+    if isinstance(error, dict):
+        error = error.get("message")
+    if isinstance(error, str) and error.strip():
+        return "exc:" + error.strip()[:120].lower()
+    if value.get("success") is False or value.get("status") in ("error", "failed", "failure"):
+        return "exc:" + str(value.get("message") or "explicit failure")[:120].lower()
+    return None
 
 
 def _extract_error_fingerprint(outputs: list[object]) -> str | None:
@@ -34,57 +56,30 @@ def _extract_error_fingerprint(outputs: list[object]) -> str | None:
     Kept as a module-level function for backwards compatibility with the
     test harness and the analysis scripts that import it directly.
     """
-    # Convert ExecutionIO objects or other objects to text
+    # Parse each observation separately; joining JSON objects loses their structure.
     text_parts = []
     for o in outputs:
-        if hasattr(o, "content"):
-            # Handle ExecutionIO objects from AppWorld
-            text_parts.append(str(o.content))
-        else:
-            text_parts.append(str(o))
-    text = "".join(text_parts).strip()
+        value = getattr(o, "content", o)
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                text_parts.append(value)
+                continue
+        error = _structured_error(value)
+        if error:
+            return error
+    text = "\n".join(text_parts).strip()
     if not text:
         return None
-
-    # Priority 0: AppWorld structured JSON errors.
-    import json as _json
-    try:
-        parsed = _json.loads(text)
-        if isinstance(parsed, dict):
-            if "error" in parsed:
-                error_val = parsed["error"]
-                if isinstance(error_val, str) and error_val:
-                    return ("exc:" + error_val[:120]).lower()
-                elif isinstance(error_val, dict) and "message" in error_val:
-                    return ("exc:" + error_val["message"][:120]).lower()
-            if "status_code" in parsed:
-                code = str(parsed["status_code"])
-                if code.startswith(("4", "5")):
-                    return "http:" + code
-        elif isinstance(parsed, list):
-            for item in parsed:
-                if isinstance(item, dict):
-                    if "error" in item:
-                        error_val = item["error"]
-                        if isinstance(error_val, str) and error_val:
-                            return ("exc:" + error_val[:120]).lower()
-                        elif isinstance(error_val, dict) and "message" in error_val:
-                            return ("exc:" + error_val["message"][:120]).lower()
-                    if "status_code" in item:
-                        code = str(item["status_code"])
-                        if code.startswith(("4", "5")):
-                            return "http:" + code
-    except (_json.JSONDecodeError, TypeError, ValueError):
-        pass
 
     # Priority 1: HTTP 4xx / 5xx.
     m = _HTTP_RE.search(text)
     if m:
-        return "http:" + m.group(0)
+        return "http:" + m.group(1)
 
     # Priority 2: AppWorld structured error messages.
     for pattern in (
-        r'"message"\s*:\s*"([^"]{5,200})"',
         r'Error\s+(?:searching|loading|calling|parsing|finding)\s+([^:\n]{3,100})',
     ):
         m = re.search(pattern, text, re.IGNORECASE)
@@ -137,16 +132,12 @@ def _extract_error_fingerprint(outputs: list[object]) -> str | None:
 def _same_action(code1: str, code2: str) -> bool:
     """Return True when two code strings represent the same logical action.
 
-    Normalises whitespace and removes function-call arguments so that
-    ``fetch_data()`` and ``fetch_data(1)`` are treated as the same action.
+    Ignores formatting but retains arguments, literals and case.
     """
-    def _strip_args(s: str) -> str:
-        idx = s.find("(")
-        return s[:idx] if idx != -1 else s
-
-    n1 = re.sub(r"\s+", " ", _strip_args(code1.strip()).lower())
-    n2 = re.sub(r"\s+", " ", _strip_args(code2.strip()).lower())
-    return n1 == n2
+    try:
+        return ast.dump(ast.parse(code1.strip())) == ast.dump(ast.parse(code2.strip()))
+    except (SyntaxError, ValueError):
+        return code1.strip() == code2.strip()
 
 
 # ----------------------------------------------------------------------
@@ -160,8 +151,8 @@ class NoProgressTrigger:
     Detection logic (priority order, stop on first match):
 
     1. **repeated_error** — the same proposed_execution has appeared in the
-       last ``config.no_progress.lookback_window`` steps AND at least one of
-       those steps produced the same error fingerprint as the current step.
+       last ``config.no_progress.lookback_window`` steps AND at least two of
+       those executed steps produced the latest error fingerprint.
        The Agent is looping on the same failing action.
 
     2. **repeated_action** — the same proposed_execution appears in the
@@ -231,7 +222,7 @@ class NoProgressTrigger:
             return 0
         if self._is_api_docs(current_code):
             return 0
-        return sum(
+        return 1 + sum(
             1
             for step in window
             if isinstance(step, dict)
@@ -264,4 +255,5 @@ class NoProgressTrigger:
             fp = _extract_error_fingerprint(prev_outputs)
             if fp is not None and fp == current_fingerprint:
                 count += 1
-        return count >= 1
+        # The latest execution is already in window; it cannot count twice.
+        return count >= 2

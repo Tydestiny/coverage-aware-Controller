@@ -1,191 +1,110 @@
-# Coverage-Aware Controller
+# AppWorld Controller Agent
 
-This repository contains the controller runtime for AppWorld:
+This repository contains the Agent + event-triggered Controller implementation. The official AppWorld checkout and dataset remain in the sibling `appworld` repository. Historical G0/G1/G2 prompts, test trajectories, checkpoints and reports are isolated in `D:\TY\SJTU\CIS\controller_study_archive_2026`; see [migration map](docs/archive_migration.md). New work is **train/dev only** until a separate final-test protocol is frozen.
 
-```text
-AppWorld simplified ReAct Agent + Coverage-Aware Controller + dense checkpoints
-```
+For runtime internals, see [Controller architecture](docs/controller_architecture.md).
 
-The repository used to be named `diagnosis-aware-compaction`, but the active
-project is now `coverage-aware-controller`. The old AFTraj diagnosis-aware
-compaction code is preserved on:
+The initial [train_dev_v1 prompt](prompts/train_dev/train_dev_v1.txt) is ready for train development. See its [version record and dry-run command](prompts/train_dev/README.md) and the [experiment plan](docs/research_protocol.md). Its model behavior has not yet been evaluated. No historical prompt is an implicit fallback.
 
-```cmd
-obsolete/diagnosis-aware-compaction-legacy
-```
+## Fixed Development Tasks
 
-## Scope
-
-The active code implements a thin controller wrapper around a simplified ReAct-style AppWorld agent. The first controller trigger is `before_finish`: when the base agent attempts to call `supervisor.complete_task`, the wrapper can allow the finish action or return an explicit interception decision.
-
-This project does not vendor AppWorld. Keep the official AppWorld repository and raw trajectories outside Git, and connect this package to AppWorld through an `ExecutionInterceptionAdapter`.
-
-Recommended local workspace:
-
-```text
-workspace/
-  appworld/                    # official AppWorld repository and task outputs
-  coverage-aware-controller/   # this repository
-```
-
-On the current machine these are:
-
-```text
-D:\TY\SJTU\CIS\appworld
-D:\TY\SJTU\CIS\coverage-aware-controller
-```
-
-## Layout
-
-```text
-controller_agent/
-  controller/       Controller decision adapter and guidance formatting.
-  triggers/         Trigger interfaces and before-finish trigger.
-  state/            Dataclasses and visible-state construction.
-  integration/      Controlled ReAct wrapper and interception adapter boundary.
-  logging/          Structured controller event logger.
-  branching/        Runtime checkpoint capture and static replay prototypes.
-  tests/            Mock-based unit tests. No real API calls.
-docs/
-  architecture.md   Main loop, interfaces, and dependency notes.
-  appworld_integration_notes.md
-scripts/
-  run_controller_api_smoke.py  Single-task controlled AppWorld runner.
-  run_train_part.cmd           CMD template for per-member task collection.
-task_ids/
-  train_parts/                 Five train task-id splits for collection.
-```
-
-## Development
-
-Run tests from CMD:
+`configs/studies/train_dev_v1.json` fixes eight train tasks and eight reserved dev tasks using official metadata, seed `20260722`, and disjoint task families. This is a prospective development reservation, not a claim that nobody previously encountered these tasks. The manifest is a reference configuration, not automatically loaded by `run`.
 
 ```cmd
-cd /d D:\TY\SJTU\CIS\coverage-aware-controller
+python scripts\experiment.py prepare
+python scripts\experiment.py run --split train --task-id 3c13f5a_2 --experiment-id train_dev_v1_smoke --branch baseline --agent-model qwen3-coder-flash-2025-07-28
+```
+
+`prepare` refuses to overwrite a different existing selection. The second command is a dry-run. Use the explicit train_dev_v1 prompt path for the first Controller trials. Initial runs now attach the existing dense checkpoint hook; the run manifest points to checkpoints alongside raw AppWorld task logs. The seed is forwarded to both Agent and environment. Existing execution safeguards remain explicit in the study configuration: 10,000 Agent/environment/extra turns, a repeated-code/output stop, and per-call output limits. Any such termination must be reported, not called normal completion.
+
+## Where Things Live
+
+```text
+appworld-controller-agent/
+  controller_agent/
+    controller/      Controller backend, decisions, guidance and input rendering
+    triggers/        before_finish, before_write, no_progress
+    state/           Model-visible ControllerInput construction
+    integration/     Existing AppWorld Agent and runner integration
+    branching/       Checkpoint capture, restore, continuation logging
+    evaluation/      Official evaluator subprocess wrapper
+    results/         Token and experiment result readers
+    tests/           Offline unit and integration tests
+  scripts/
+    experiment.py    Only recommended human-facing train/dev CLI
+    run_live_controller_initial_task.py    Guarded underlying run
+    run_checkpoint_dual_branch_smoke.py    Guarded paired checkpoint run
+    run_official_evaluation.py             Official offline evaluation
+    analyze_branch_experiment.py           Paired-result analysis
+  artifacts/experiments/  New local runs (Git ignored)
+```
+
+`APPWORLD_ROOT` defaults to `..\appworld`. `CONTROLLER_ARTIFACT_ROOT` defaults to `artifacts\experiments`. Set either environment variable to override; never set it to the historical archive. `.env.example` lists the environment variables, but does not contain credentials. `doctor` reports whether provider keys are present in the current process and whether `<appworld>\experiments\.env` exists; it never prints key values. The underlying task runner reads that AppWorld `.env` at execution time.
+
+`controller_agent/` contains reusable runtime components, not user commands. Most other scripts are compatibility entry points for older experiments; several import each other, so they are not safe to delete by filename. Use `scripts\experiment.py` for new train/dev work. See [research protocol](docs/research_protocol.md) for the fixed research question and evaluation boundary.
+The [script inventory](docs/script_inventory.md) distinguishes supported commands from retained implementation dependencies.
+
+## Start Here (Windows CMD)
+
+```cmd
+cd /d D:\TY\SJTU\CIS\appworld-controller-agent
+python scripts\experiment.py doctor
 python -m pytest
+python scripts\experiment.py list --archive-root D:\TY\SJTU\CIS\controller_study_archive_2026
 ```
 
-No real AppWorld task or model API call is launched by the unit tests.
+`doctor` does not call an API. It tests an actual AppWorld import using `<appworld>\.venv\Scripts\python.exe`, which is also used for task execution. The controller repo's old `.venv` currently points to a removed interpreter, so use a working Python 3.11+ for `python -m pytest`. The test suite uses mocks and does not run AppWorld tasks.
 
-## Controller Prompt Optimization
+## One Train/Dev Task
 
-The optimizer consumes existing branching results only; it does not run AppWorld,
-modify the active Controller prompt, or accept a candidate automatically.
-
-Dry-run from CMD:
+Pick an ID from `D:\TY\SJTU\CIS\appworld\data\datasets\dev.txt` or `train.txt`. The default is **dry-run**, which checks the official task list and prints paths without creating a result or calling a model:
 
 ```cmd
-python scripts\optimize_controller_prompt.py ^
-  --experiment-root results\branching_experiment\checkpoint_dual_smoke_20260725 ^
-  --current-prompt controller_agent\controller\prompts\g0_system.txt ^
-  --output-dir results\prompt_optimization\dry_run ^
-  --dry-run
+python scripts\experiment.py run --split dev --task-id <DEV_TASK_ID> --experiment-id dev_probe_v1 --branch baseline --agent-model qwen3-coder-flash-2025-07-28
 ```
 
-After setting `OPENROUTER_API_KEY` in `.env`, make one optimizer call with the
-same command and without `--dry-run`. Review the generated candidate on held-out
-checkpoints before any manual adoption.
-
-## Oracle Instruction Branch Collection
-
-To collect baseline, Controller, and one externally injected oracle-instruction
-branch for each annotated post-observation checkpoint:
+Run only after reviewing the printed command and providing the required credentials in the environment:
 
 ```cmd
-python scripts\collect_oracle_instruction_branches.py ^
-  --input oracle_instruction.jsonl ^
-  --experiment-id oracle_instruction_batch_v1 ^
-  --branches baseline,controller,oracle_instruction ^
-  --execute
+python scripts\experiment.py run --split dev --task-id <DEV_TASK_ID> --experiment-id dev_probe_v1 --branch baseline --agent-model qwen3-coder-flash-2025-07-28 --execute
 ```
 
-Use `--resume` to skip branches with a completed official evaluator outcome.
-Each branch is restored in a separate AppWorld output namespace and written under
-`results\branching_experiment\<experiment_id>\`.
-
-## Trajectory Collection
-
-Each member can run one task-id part file. The model and Agent configuration are
-fixed in `scripts/run_controller_api_smoke.py`:
-
-- Agent model: `qwen3-coder-flash-2025-07-28`
-- Controller model: `qwen3.7-max-2026-05-20`
-- endpoint: `https://dashscope.aliyuncs.com/compatible-mode/v1`
-- agent: `simplified_react_code_agent`
-- temperature: `0.0`
-- seed: `100`
-- thinking: disabled
-
-Required local secret:
-
-```text
-<appworld>\experiments\.env
-```
-
-with:
-
-```text
-DASHSCOPE_API_KEY=...
-```
-
-Run a split from CMD:
+A Controller run requires an **independently developed train/dev prompt file**. No historical prompt is a default:
 
 ```cmd
-cd /d D:\TY\SJTU\CIS\coverage-aware-controller
-scripts\run_train_part.cmd task_ids\train_parts\train_task_ids_part_1.txt
+python scripts\experiment.py run --split dev --task-id <DEV_TASK_ID> --experiment-id dev_probe_v1 --branch controller --agent-model qwen3-coder-flash-2025-07-28 --controller-model deepseek-v4-pro --prompt prompts\train_dev\candidate_v1.txt
+python scripts\experiment.py run --split dev --task-id <DEV_TASK_ID> --experiment-id dev_probe_v1 --branch controller --agent-model qwen3-coder-flash-2025-07-28 --controller-model deepseek-v4-pro --prompt prompts\train_dev\candidate_v1.txt --execute
 ```
 
-Outputs are task-local under AppWorld:
+The run records a SHA-256 prompt hash. Results are under `artifacts\experiments\<experiment-id>\tasks\<task-id>\<branch>`. Reusing the same run directory is blocked; choose a new experiment ID rather than overwriting a result. Raw AppWorld task logs are written under the AppWorld checkout with the experiment name recorded in each run manifest.
 
-```text
-<appworld>\experiments\outputs\controlled_react_checkpoint_collection\tasks\<task_id>\
-  logs\
-  evaluation\
-  controller\
-  checkpoints\
+Use `--trigger-profile before_finish` to restrict Controller opportunities to task completion, or the default `all` for `before_finish`, `before_write`, and `no_progress`. `--max-controller-calls` and `--max-controller-blocks` default to 4 and are recorded with the run. Trigger detection is logged for every executable candidate in `trigger_events.jsonl`, including positive detections bypassed after a budget is exhausted. Model, seed, and Controller endpoint can be selected from the same command.
+
+## One Shared Checkpoint Pair
+
+Use a post-observation checkpoint from a **train/dev baseline produced by this CLI**. The source task directory must match its active baseline manifest under `artifacts\experiments`; archived or unrelated task outputs are rejected. This command runs a no-Controller continuation and a Controller continuation from independent state copies. It is a dry-run unless `--execute` is supplied:
+
+```cmd
+python scripts\experiment.py run checkpoint --split dev --task-id <DEV_TASK_ID> --experiment-id dev_checkpoint_v1 --agent-model qwen3-coder-flash-2025-07-28 --controller-model deepseek-v4-pro --prompt prompts\train_dev\candidate_v1.txt --checkpoint-id <CHECKPOINT_ID> --source-task-dir <BASELINE_TASK_DIR>
 ```
 
-The `checkpoints\manifest.json` file indexes all `pre_action`,
-`post_observation`, and `terminal` records for that task.
+Review the printed paths, then rerun the same command with `--execute`. The paired runner performs official offline evaluation and writes both branches under `artifacts\experiments\dev_checkpoint_v1\tasks\<DEV_TASK_ID>`. A nonexistent or mismatched checkpoint is rejected; it is never silently replaced by a nearby one. Use a new experiment ID for each pair. This entry point intentionally supports one checkpoint pair per experiment; existing batch collectors remain separate internal tools.
 
-## Current Contract
+## Evaluate, Analyze, Find
 
-When controller mode is disabled, `ControlledReActAgent` delegates directly to the wrapped base agent.
+Evaluation uses AppWorld's official evaluator in a separate process and is not an LLM call. First preview, then execute:
 
-When controller mode is enabled:
+```cmd
+python scripts\experiment.py evaluate --experiment-id dev_probe_v1 --task-id <DEV_TASK_ID> --branch baseline
+python scripts\experiment.py evaluate --experiment-id dev_probe_v1 --task-id <DEV_TASK_ID> --branch baseline --execute
+python scripts\experiment.py analyze --experiment-id dev_probe_v1
+python scripts\experiment.py list
+```
 
-1. The wrapped agent generates its normal next execution input.
-2. `ControlledReActAgent` builds a `TriggerContext` from task id, step index, visible history, proposed execution, last execution outputs, and controller runtime counters.
-3. `BeforeFinishTrigger.detect(context)` checks whether the proposed execution attempts `supervisor.complete_task`.
-4. `StateBuilder` builds a `ControllerInput` from visible task/history/output only.
-5. `Controller.decide` returns a `ControllerResponse` containing a `ControllerDecision` and optional usage metadata.
-6. `ControllerDecision.action` remains one of:
-   `PROCEED`, `VERIFY_TARGET_SET`, `LOOKUP_API_SPEC`, `FIX_EXECUTION`, `REPLAN`.
-7. `inspect_proposed_execution(...)` returns an `InterceptionResult`.
-8. The integration adapter decides how to apply that result to the concrete runtime.
+`analyze` writes `analysis\summary.json` and `analysis\data_quality.json`. It pairs only available baseline and Controller runs; a one-branch probe will be flagged as missing a pair. The official evaluator result is saved next to the run summary as `evaluator_result.json`.
 
-The core layer does not implement AppWorld-specific blocking semantics. In the current offline adapter, a blocked branch returns `integration not configured` and keeps the proposed execution unchanged. A production AppWorld adapter must define the exact runtime behavior before real tasks are run.
+The AppWorld checkout remains a separate upstream Git repository and hosts raw runtime logs. The Controller repo's `artifacts\experiments` is the user-facing experiment index, not a second copy of the full raw trajectory. Preserve manifest links when archiving a run.
 
-The minimal AppWorld integration spike adds `AppWorldInterceptionAdapter` and `ControlledAppWorldRunner`. The runner wraps the stock AppWorld step loop so a blocked `complete_task` is not sent to `world.batch_execute`; instead, marked guidance is injected and the agent advances to the next generation turn.
+## Research Boundary
 
-## Current Boundaries
-
-- Trigger layer: detects whether a controller call should happen.
-- State layer: defines contracts and builds visible controller inputs.
-- Controller layer: validates backend output and fail-opens on invalid JSON or exceptions.
-- Integration layer: adapts `InterceptionResult` to a concrete runtime.
-- Logging layer: records controller events, usage metadata, and runtime counters without API keys.
-
-Only `before_finish` is implemented. New triggers, a real controller model backend, controller prompts, and AppWorld-specific interception behavior should be implemented after these interfaces are treated as stable.
-
-## AppWorld Smoke Path
-
-The current smoke integration is deterministic and model-free:
-
-- `DeterministicSmokeController` blocks the first `before_finish` and allows the second.
-- `AppWorldInterceptionAdapter` injects `[CONTROLLER_GUIDANCE]` as a `user` role message because the simplified ReAct formatter only supports `system`, `assistant`, and `user`.
-- `ControlledAppWorldRunner` is the minimal runner wrapper that skips environment execution for blocked finish attempts.
-
-The inspected AppWorld call chain is documented in [docs/appworld_integration_notes.md](docs/appworld_integration_notes.md).
-
-A real single-task smoke test should use a cached or mock model output source first. Do not run a live API-backed AppWorld task until the production adapter behavior is reviewed.
+Develop prompts and adjustable settings using **train/dev only**. Reserve dev tasks for a predeclared runtime/quality gate. Do not feed G2, archived test logs, evaluator hidden data, or historical oracle guidance into prompt development. Before any final test run, freeze the prompt hash, code, models, seed, sampling, and analysis method. See the single maintained [experiment plan](docs/research_protocol.md).

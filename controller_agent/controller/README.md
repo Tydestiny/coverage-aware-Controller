@@ -11,16 +11,16 @@ Current implementations:
 - `Controller`: wraps an optional backend callable and validates output.
 - `GuidanceBuilder`: converts non-`PROCEED` decisions into Action/Advice guidance.
 - `DeterministicSmokeController`: model-free smoke controller for integration tests only.
-- `PolicyG0Backend` (`policy_g0.py`): deterministic policy from Part3 branch experiments (local).
-- Prompt G0 templates under `prompts/` (`g0_system.txt`, `g0_user_template.txt`, `instruction_templates.json`).
+- `LiveLLMBackend`: uses a run-specific system prompt supplied explicitly by path.
+- `input_renderer.py`: serializes the complete visible `ControllerInput` without a historical policy.
 
 Usage (local only; do not push unless intentional):
 
 ```python
 from controller_agent.controller.controller import Controller
-from controller_agent.controller.policy_g0 import PolicyG0Backend
+from controller_agent.controller.live_llm_backend import LiveLLMBackend
 
-controller = Controller(backend=PolicyG0Backend())
+controller = Controller(backend=LiveLLMBackend(system_prompt_path="path/to/new_train_dev_prompt.txt"))
 ```
 
 Extension rules:

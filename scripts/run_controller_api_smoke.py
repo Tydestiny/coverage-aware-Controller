@@ -199,11 +199,13 @@ def build_agent_config(
 ) -> dict[str, Any]:
     """Build the AppWorld simplified ReAct agent config."""
     model_config = build_agent_model_config(agent_model)
+    seed = getattr(args, "seed", 100)
+    model_config["seed"] = seed
     return {
         "type": AGENT_NAME,
         "model_config": model_config,
         "appworld_config": {
-            "random_seed": 100,
+            "random_seed": seed,
             "raise_on_extra_parameters": True,
         },
         "logger_config": {

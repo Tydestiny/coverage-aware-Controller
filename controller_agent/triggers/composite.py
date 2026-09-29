@@ -3,15 +3,14 @@
 Wraps several trigger detectors and exposes a single ``detect(context)``
 method that:
 
-1. Returns ``budget_exhausted`` once the per-task trigger count reaches
+1. Still detects positive candidates after the per-task trigger count reaches
    ``config.budget.max_triggers_per_task`` (unless the
    ``min_before_finish_triggers`` floor is not yet met, in which case the
    before_finish detector is forced).
 2. Iterates the detectors in ``config.budget.detector_order`` and returns
    the first positive result.
 
-The default config drives the historical behaviour of
-``scripts/test_all_triggers_optimized.py``.
+Budget bypasses are explicit metadata and do not suppress risk detection.
 """
 
 from __future__ import annotations
@@ -82,22 +81,27 @@ class CompositeTriggerDetectorWithBudget:
         self._before_finish_count = 0
 
     def detect(self, context: TriggerContext) -> TriggerResult:
-        if self._trigger_count >= self._config.max_triggers_per_task:
-            if self._before_finish_count < self._config.min_before_finish_triggers:
-                before_finish_detector = self._detectors[0][1]
-                result = before_finish_detector.detect(context)
-                if result.should_call_controller:
-                    self._before_finish_count += 1
-                    return result
-            return TriggerResult(False, "budget_exhausted")
-
+        exhausted = self._trigger_count >= self._config.max_triggers_per_task
+        first_positive: str | None = None
         for name, detector in self._detectors:
             result = detector.detect(context)
             if result.should_call_controller:
+                if first_positive is None:
+                    first_positive = name
+                finish_floor = name == "before_finish" and self._before_finish_count < self._config.min_before_finish_triggers
+                if exhausted and not finish_floor:
+                    continue
                 self._trigger_count += 1
                 if name == "before_finish":
                     self._before_finish_count += 1
                 return result
+
+        if first_positive is not None:
+            return TriggerResult(False, "budget_exhausted", {
+                "trigger_positive": True,
+                "budget_bypassed": True,
+                "detected_trigger": first_positive,
+            })
 
         return TriggerResult(False, "no_trigger")
 

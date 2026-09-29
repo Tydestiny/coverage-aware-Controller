@@ -62,3 +62,18 @@ def test_builder_preserves_incomplete_context_signal() -> None:
     result = _build([{"role": "user", "content": "[TRIMMED HISTORY]"}], complete=False)
 
     assert result.context_complete is False
+
+
+def test_capture_metadata_is_optional_and_deep_copied() -> None:
+    from dataclasses import asdict
+
+    base = _build([])
+    assert base.context_metadata == {}
+    values = asdict(base)
+    values.pop("trigger_reason")
+    values.pop("trigger_metadata")
+    metadata = {"incomplete_reasons": ["task_boundary_unverified"]}
+    values["context_metadata"] = metadata
+    result = StateBuilder().build(trigger=TriggerResult(False, "none"), **values)
+    metadata["incomplete_reasons"].append("changed")
+    assert result.context_metadata["incomplete_reasons"] == ["task_boundary_unverified"]

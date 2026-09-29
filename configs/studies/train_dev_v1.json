@@ -1,0 +1,246 @@
+{
+  "study_id": "train_dev_v1",
+  "status": "task_selection_fixed_prompt_pending",
+  "selection_seed": 20260722,
+  "selection_rule": "dev first; unique ID-prefix families; least represented difficulty, then single/multiple apps, then new apps; seeded tie order",
+  "metadata_boundary": "Only train/dev IDs, difficulty, num_apps and required_apps. No instructions, answers, solutions, evaluator results, test files or archived runs.",
+  "dataset_list_sha256": {
+    "train": "93d9fe71e7a2e3b7529803d4a20b604f4ebf5ae806f321081140238068189d37",
+    "dev": "9fa976589300ea8905708257144d801d1604b06d85fb0181e381df8a3ba85001"
+  },
+  "appworld_versions": {
+    "code": null,
+    "data": null
+  },
+  "appworld_commit": "a072b7a86e7c1d5b1d7175659d750ebb9b79f10a",
+  "train": [
+    {
+      "task_id": "3c13f5a_2",
+      "split": "train",
+      "family_id": "3c13f5a",
+      "difficulty": 3,
+      "num_apps": 3,
+      "apps": [
+        "file_system",
+        "phone",
+        "venmo"
+      ],
+      "metadata_sha256": "dd17f8660a350bac2b90d2f50092dd3dde8d92c58523a08f40a1cc57a7df98d7",
+      "required_apps_sha256": "da0d33b08bb1741e442e6b7f8217dd51ff7fe0bcf5ec3b270329492276cc0f82"
+    },
+    {
+      "task_id": "cf6abd2_3",
+      "split": "train",
+      "family_id": "cf6abd2",
+      "difficulty": 1,
+      "num_apps": 1,
+      "apps": [
+        "simple_note"
+      ],
+      "metadata_sha256": "ffaf8ea85a67b03dab91ae67108b4e776799e14f26a2ebf2c0e60b181700f8f9",
+      "required_apps_sha256": "5d5e8dac0764a270e82845120c2433aaa18e01fe1bcd5567b5d5574a777a8e21"
+    },
+    {
+      "task_id": "ccb4494_1",
+      "split": "train",
+      "family_id": "ccb4494",
+      "difficulty": 2,
+      "num_apps": 1,
+      "apps": [
+        "spotify"
+      ],
+      "metadata_sha256": "3b72d348d50ecb0a85bf1e16818b7faa43ad18dc4c7e8d7546ce2b5a63db3c90",
+      "required_apps_sha256": "ab5e6144ccf1f6697353cfb7d269f4b700c79512d708ba1c845bdf8f59fd4296"
+    },
+    {
+      "task_id": "b0a8eae_1",
+      "split": "train",
+      "family_id": "b0a8eae",
+      "difficulty": 3,
+      "num_apps": 2,
+      "apps": [
+        "simple_note",
+        "spotify"
+      ],
+      "metadata_sha256": "0cf992b3acbda888c63e4f004ed1dafb1c575a4d29607867e37d6d43049bf1fa",
+      "required_apps_sha256": "848efa785b487953994384113bf7ea0a1095dfa916836c97764550994ff11125"
+    },
+    {
+      "task_id": "c901732_2",
+      "split": "train",
+      "family_id": "c901732",
+      "difficulty": 1,
+      "num_apps": 1,
+      "apps": [
+        "spotify"
+      ],
+      "metadata_sha256": "241344c90333cccb099132037282589ada8a11b3c45af03093e32f08089f1120",
+      "required_apps_sha256": "ab5e6144ccf1f6697353cfb7d269f4b700c79512d708ba1c845bdf8f59fd4296"
+    },
+    {
+      "task_id": "2a163ab_2",
+      "split": "train",
+      "family_id": "2a163ab",
+      "difficulty": 2,
+      "num_apps": 2,
+      "apps": [
+        "phone",
+        "venmo"
+      ],
+      "metadata_sha256": "1d4392353637b5d55f2e71bb261d914b55a10c80783841f731d0621c9dcecbe4",
+      "required_apps_sha256": "670941b20e2d022bde4a0dacb4530890776ab16eba4f498adb1f86bbb72d3c33"
+    },
+    {
+      "task_id": "287e338_2",
+      "split": "train",
+      "family_id": "287e338",
+      "difficulty": 1,
+      "num_apps": 1,
+      "apps": [
+        "spotify"
+      ],
+      "metadata_sha256": "c1f940ae838727ddebebe11a34cf1ac833469f01b89a27615b7c40c4ad271513",
+      "required_apps_sha256": "ab5e6144ccf1f6697353cfb7d269f4b700c79512d708ba1c845bdf8f59fd4296"
+    },
+    {
+      "task_id": "d0b1f43_1",
+      "split": "train",
+      "family_id": "d0b1f43",
+      "difficulty": 2,
+      "num_apps": 2,
+      "apps": [
+        "phone",
+        "venmo"
+      ],
+      "metadata_sha256": "c385d19282026fbfebc6fcc8f630278a7cab08441275073e7cabe4e6c3b0e251",
+      "required_apps_sha256": "670941b20e2d022bde4a0dacb4530890776ab16eba4f498adb1f86bbb72d3c33"
+    }
+  ],
+  "reserved_dev": [
+    {
+      "task_id": "0d8a4ee_2",
+      "split": "dev",
+      "family_id": "0d8a4ee",
+      "difficulty": 2,
+      "num_apps": 2,
+      "apps": [
+        "phone",
+        "venmo"
+      ],
+      "metadata_sha256": "322b18cf4d9d43ed2351637e956d5ac7b63f609297dec9b843d281e5b679039b",
+      "required_apps_sha256": "670941b20e2d022bde4a0dacb4530890776ab16eba4f498adb1f86bbb72d3c33"
+    },
+    {
+      "task_id": "4ec8de5_2",
+      "split": "dev",
+      "family_id": "4ec8de5",
+      "difficulty": 1,
+      "num_apps": 1,
+      "apps": [
+        "spotify"
+      ],
+      "metadata_sha256": "8f2c50a666cd658f7feeedf6200f8b33706167c9ae1f77d68755542fbb5fff66",
+      "required_apps_sha256": "ab5e6144ccf1f6697353cfb7d269f4b700c79512d708ba1c845bdf8f59fd4296"
+    },
+    {
+      "task_id": "530b157_2",
+      "split": "dev",
+      "family_id": "530b157",
+      "difficulty": 3,
+      "num_apps": 2,
+      "apps": [
+        "phone",
+        "venmo"
+      ],
+      "metadata_sha256": "8757cfd2445dd65a0cb246ff130f9fe2a1d2b1ffe185b1919403a58c5fd55a88",
+      "required_apps_sha256": "670941b20e2d022bde4a0dacb4530890776ab16eba4f498adb1f86bbb72d3c33"
+    },
+    {
+      "task_id": "68ee2c9_3",
+      "split": "dev",
+      "family_id": "68ee2c9",
+      "difficulty": 1,
+      "num_apps": 1,
+      "apps": [
+        "file_system"
+      ],
+      "metadata_sha256": "bab6a91b498223a0fb8511e62115c6f71963825144e5d8d09ab3c87a3b83ba9b",
+      "required_apps_sha256": "dff6f67e017f77e47f8f0a64d4ef8eda485653064858b22777c26ec52e85ed65"
+    },
+    {
+      "task_id": "6c2c621_2",
+      "split": "dev",
+      "family_id": "6c2c621",
+      "difficulty": 2,
+      "num_apps": 2,
+      "apps": [
+        "file_system",
+        "simple_note"
+      ],
+      "metadata_sha256": "2e45253014a67b031f107e486f0bd2244f790d52e5cab55322207b537cee1c74",
+      "required_apps_sha256": "a3f1ade98b426c6114835739fba4022301ee224ee4a508505a73d9c48f9791ff"
+    },
+    {
+      "task_id": "6171bbc_2",
+      "split": "dev",
+      "family_id": "6171bbc",
+      "difficulty": 2,
+      "num_apps": 1,
+      "apps": [
+        "spotify"
+      ],
+      "metadata_sha256": "d7320de90d0ee3828482f278cbc1e3441bae0f971743ef412520a4610c8300e4",
+      "required_apps_sha256": "ab5e6144ccf1f6697353cfb7d269f4b700c79512d708ba1c845bdf8f59fd4296"
+    },
+    {
+      "task_id": "df61dc5_3",
+      "split": "dev",
+      "family_id": "df61dc5",
+      "difficulty": 1,
+      "num_apps": 2,
+      "apps": [
+        "phone",
+        "venmo"
+      ],
+      "metadata_sha256": "dca6f2362b7d672a2357b02b980fb660955b41669cf292242df623cf3cdebf25",
+      "required_apps_sha256": "670941b20e2d022bde4a0dacb4530890776ab16eba4f498adb1f86bbb72d3c33"
+    },
+    {
+      "task_id": "fac291d_3",
+      "split": "dev",
+      "family_id": "fac291d",
+      "difficulty": 2,
+      "num_apps": 1,
+      "apps": [
+        "spotify"
+      ],
+      "metadata_sha256": "c08a3fa5c956f7a3d91083185c6fb1c2ab513ff1a5c9fe1b2f7ec0e37e334db1",
+      "required_apps_sha256": "ab5e6144ccf1f6697353cfb7d269f4b700c79512d708ba1c845bdf8f59fd4296"
+    }
+  ],
+  "smoke_task_ids": [
+    "3c13f5a_2",
+    "cf6abd2_3"
+  ],
+  "settings": {
+    "agent_model": "qwen3-coder-flash-2025-07-28",
+    "controller_model": "deepseek-v4-pro",
+    "agent_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "controller_base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    "api_key_env": "DASHSCOPE_API_KEY",
+    "temperature": 0.0,
+    "seed": 20260722,
+    "controller_enable_thinking": false,
+    "controller_system_prompt": null,
+    "max_controller_calls": 4,
+    "max_controller_blocks": 4,
+    "trigger_profile": "all",
+    "agent_max_output_tokens_per_call": 65536,
+    "controller_max_output_tokens_per_call": 512,
+    "controller_request_timeout_seconds": 60.0,
+    "max_agent_turns": 10000,
+    "max_environment_executions": 10000,
+    "max_extra_agent_turns_after_block": 10000,
+    "max_consecutive_identical_executions": 3
+  }
+}

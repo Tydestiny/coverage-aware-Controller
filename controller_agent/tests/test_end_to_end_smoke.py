@@ -127,6 +127,12 @@ def test_deterministic_controller_full_runner_chain() -> None:
     assert controlled.runtime_state.consecutive_blocks == 0
     assert controlled.runtime_state.agent_turn_count == 4
     assert controlled.runtime_state.environment_execution_count == 3
+    first, last = controlled._previous_controller_decisions
+    assert first["original_execution_status"] == "blocked"
+    assert first["execution_result"] is None
+    assert first["subsequent_executions"][0]["executed_code"] == ["print('verify target set')"]
+    assert last["original_execution_status"] == "executed"
+    assert last["execution_result"] == ["output for: apis.supervisor.complete_task()"]
 
 
 def test_runner_does_not_execute_empty_code_after_guidance() -> None:

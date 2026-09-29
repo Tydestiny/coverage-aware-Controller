@@ -15,7 +15,7 @@ htmlcov/
 # Local secrets and machine-specific configuration
 .env
 .env.*
-.env.example
+!.env.example
 
 # External AppWorld checkout and local dataset material
 appworld/
@@ -25,6 +25,7 @@ models/
 
 # Runtime trajectories, checkpoints, branch outputs, and reports
 results/
+artifacts/
 # Keep source modules named "results"; only runtime result directories are ignored.
 !controller_agent/results/
 !controller_agent/results/*.py
@@ -54,11 +55,4 @@ Thumbs.db
 .idea/
 .vscode/
 
-# Keep only core architecture documentation visible when new documentation is
-# generated later. Existing tracked files are unaffected by ignore rules.
-docs/*
-!docs/architecture.md
-!docs/development_contract.md
-!docs/module_dependency_map.md
-!docs/appworld_integration_notes.md
-!docs/runtime_checkpoint_collection.md
+# Documentation is source; generated experiments belong under artifacts/.
