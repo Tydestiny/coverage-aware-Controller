@@ -5,7 +5,7 @@ This note records the local AppWorld call chain inspected for the minimal Covera
 Local source inspected:
 
 ```text
-D:\TY\SJTU\CIS\appworld
+<APPWORLD_ROOT>
 ```
 
 ## Simplified ReAct Step Loop

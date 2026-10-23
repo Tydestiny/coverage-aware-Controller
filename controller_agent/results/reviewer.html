@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'none'">
+  <title>Trajectory Review</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, "Microsoft YaHei", sans-serif; font-size: 14px; color: #19242a; background: #f6f8f7; }
+    * { box-sizing: border-box; }
+    body { margin: 0; height: 100vh; display: flex; flex-direction: column; }
+    .picker { display: flex; gap: 12px; align-items: end; padding: 12px 24px; background: #edf3f0; border-bottom: 1px solid #cfd8d5; }
+    .picker[hidden] { display: none; }
+    .picker label { flex: 1; min-width: 0; }
+    .picker select { height: 36px; }
+    #catalog-status { padding: 0 24px; color: #704b13; }
+    #source-info { padding: 0 24px; background: #fff; }
+    #source-info details { border: 0; margin: 0; }
+    #source-info summary { font-size: 12px; padding: 7px 0; }
+    .decision { padding: 16px 0 20px; border-bottom: 1px solid #dfe5e2; }
+    .decision p { white-space: pre-wrap; line-height: 1.85; margin: 8px 0 16px; max-width: 100ch; overflow-wrap: anywhere; }
+    .decision h3 { color: #185f49; }
+    button, input, select, textarea { font: inherit; }
+    button { cursor: pointer; }
+    header { padding: 16px 24px 12px; border-bottom: 1px solid #cfd8d5; background: #fff; }
+    header h1 { display: flex; align-items: center; gap: 10px; margin: 0 0 9px; font-size: 20px; font-weight: 650; }
+    .icon { width: 16px; height: 16px; flex: 0 0 16px; vertical-align: middle; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    header h1 .icon { width: 22px; height: 22px; flex-basis: 22px; color: #237258; }
+    button:focus-visible, summary:focus-visible { outline: 2px solid #337eaa; outline-offset: 3px; }
+    .meta { display: flex; flex-wrap: wrap; gap: 6px 16px; color: #52625e; font-size: 12px; overflow-wrap: anywhere; }
+    .summary { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+    .summary span { padding: 5px 9px; background: #f0f3f5; color: #43545e; border-radius: 4px; font-size: 12px; }
+    .warning { border-top: 1px solid #edcc99; background: #fff5e3; padding: 7px 24px; color: #704b13; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 24px; border-bottom: 1px solid #cfd8d5; background: #fff; }
+    .toolbar input[type="search"] { width: min(320px, 100%); min-height: 34px; padding: 5px 8px; border: 1px solid #b5c4bd; border-radius: 4px; }
+    .tabs { display: flex; border: 1px solid #a6bcb4; border-radius: 4px; overflow: hidden; }
+    .tabs button { display: inline-flex; align-items: center; gap: 6px; border: 0; border-right: 1px solid #a6bcb4; background: #fff; padding: 8px 11px; white-space: nowrap; }
+    .tabs button:last-child { border-right: 0; }
+    .tabs button.active { background: #dcece4; color: #145c45; font-weight: 650; }
+    .command { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; background: #fff; color: #355b4e; border: 1px solid #bdccc5; border-radius: 5px; padding: 7px 10px; }
+    .command:hover, .tabs button:hover { background: #eaf3ef; }
+    .spacer { flex: 1; }
+    .layout { display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); flex: 1; min-height: 0; }
+    .timeline { overflow-y: auto; border-right: 1px solid #cfd8d5; background: #fff; }
+    .timeline button { display: block; width: 100%; text-align: left; padding: 16px; border: 0; border-bottom: 1px solid #e9eeeb; background: transparent; color: inherit; }
+    .timeline button:hover { background: #eef5f1; }
+    .timeline button.selected { background: #e0eee7; box-shadow: inset 3px 0 #187053; }
+    .row-top { display: flex; align-items: baseline; gap: 7px; font-size: 12px; color: #53615d; }
+    .row-top strong { color: #182b26; font-size: 13px; }
+    .row-preview { margin-top: 8px; font-size: 13px; color: #53635d; line-height: 1.55; overflow-wrap: anywhere; max-height: 3.1em; overflow: hidden; }
+    .badge { margin-left: auto; padding: 2px 5px; border-radius: 3px; color: #fff; background: #426b8a; white-space: nowrap; }
+    .badge.block { background: #a24d32; }
+    .badge.trigger { background: #84652b; }
+    .badge.first-error { background: #a24d32; margin-left: 4px; }
+    main { overflow-y: auto; padding: 24px 28px 40px; background: #fafbfc; }
+    main h2 { margin: 0 0 16px; font-size: 17px; }
+    main h3 { margin: 16px 0 7px; font-size: 14px; }
+    .facts { display: flex; flex-wrap: wrap; gap: 12px 24px; padding-bottom: 20px; margin-bottom: 18px; border-bottom: 1px solid #dfe5e2; }
+    .fact { min-width: 115px; font-size: 12px; color: #58645f; }
+    .fact strong { display: block; margin-top: 5px; font-size: 14px; color: #1e2b27; overflow-wrap: anywhere; }
+    details { margin: 12px 0; border: 1px solid #dfe5e2; border-radius: 5px; background: #fff; }
+    details > summary { padding: 13px 15px; cursor: pointer; font-weight: 550; color: #384b43; }
+    details > summary:hover { background: #f5f8f6; }
+    details > summary::marker { color: #889c93; font-size: 11px; }
+    details > .content { padding: 4px 16px 18px; }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.75 ui-monospace, Consolas, monospace; color: #394750; }
+    .message { padding: 14px 0; border-top: 1px solid #e1e8e3; }
+    .message strong { display: block; margin-bottom: 4px; color: #366956; font-size: 12px; }
+    .annotation { padding: 12px 0; border-top: 1px solid #cfd8d5; }
+    .annotation-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+    label { display: block; font-size: 12px; color: #52615b; }
+    label select, label textarea { display: block; width: 100%; margin-top: 4px; padding: 7px; border: 1px solid #aebfb6; border-radius: 4px; background: #fff; color: #19242a; }
+    label textarea { min-height: 65px; resize: vertical; }
+    .empty { color: #66736f; }
+    .links { display: flex; flex-wrap: wrap; gap: 12px; }
+    a { color: #145c45; }
+    @media (max-width: 720px) {
+      body { height: auto; min-height: 100vh; }
+      .picker { padding: 12px; flex-wrap: wrap; }
+      .picker label { flex-basis: 100%; }
+      header, .toolbar { padding-left: 12px; padding-right: 12px; }
+      .layout { display: block; height: auto; }
+      .timeline { max-height: 230px; border-right: 0; border-bottom: 1px solid #cfd8d5; }
+      main { overflow: visible; padding: 14px 12px 24px; }
+      .annotation-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Lucide 0.468.0 icons, ISC License.
+  Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part
+  of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022.
+  Permission to use, copy, modify, and/or distribute this software for any
+  purpose with or without fee is hereby granted, provided that the above
+  copyright notice and this permission notice appear in all copies.
+  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+  WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+  MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+  ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+  WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+  ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+  OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+  -->
+  <svg xmlns="http://www.w3.org/2000/svg" width="0" height="0" aria-hidden="true" style="position:absolute;overflow:hidden">
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M3 12h.01M3 18h.01M3 6h.01M8 12h13M8 18h13M8 6h13"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1zM9 12l2 2 4-4"/></symbol>
+    <symbol id="i-ban" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="1"/><path d="M18.944 12.33a1 1 0 0 0 0-.66 7.5 7.5 0 0 0-13.888 0 1 1 0 0 0 0 .66 7.5 7.5 0 0 0 13.888 0"/></symbol>
+  </svg>
+  <script id="review-data" type="application/json">__REVIEW_DATA__</script>
+  <div class="picker" id="picker" hidden>
+    <label>实验<select id="experiment-select"></select></label>
+    <label>任务<select id="task-select"></select></label>
+    <label>运行条件 / checkpoint<select id="run-select"></select></label>
+    <button class="command" id="refresh-catalog" type="button"><svg class="icon" aria-hidden="true"><use href="#i-refresh"/></svg>刷新列表</button>
+  </div>
+  <div id="catalog-status" role="status"></div>
+  <header>
+    <h1><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg>轨迹审阅</h1>
+    <div class="meta" id="meta"></div>
+    <div class="summary" id="summary"></div>
+  </header>
+  <div id="source-info"></div>
+  <div id="warnings"></div>
+  <div class="toolbar">
+    <div class="tabs" role="tablist" aria-label="时间线筛选">
+      <button type="button" class="active" data-filter="all"><svg class="icon" aria-hidden="true"><use href="#i-list"/></svg>全部</button>
+      <button type="button" data-filter="trigger"><svg class="icon" aria-hidden="true"><use href="#i-zap"/></svg>触发阳性</button>
+      <button type="button" data-filter="controller"><svg class="icon" aria-hidden="true"><use href="#i-shield"/></svg>Controller 调用</button>
+      <button type="button" data-filter="blocked"><svg class="icon" aria-hidden="true"><use href="#i-ban"/></svg>阻断</button>
+    </div>
+    <input id="search" type="search" aria-label="搜索动作与反馈" placeholder="搜索动作、反馈或指导">
+    <span class="spacer"></span>
+    <span id="save-status" role="status" aria-live="polite"></span>
+    <button type="button" class="command" id="export"><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg>导出标注 JSON</button>
+    <button type="button" class="command" id="import-button"><svg class="icon" aria-hidden="true"><use href="#i-upload"/></svg>导入标注</button>
+    <input id="import-file" type="file" accept=".json,application/json" hidden>
+  </div>
+  <div class="layout">
+    <nav class="timeline" id="timeline" aria-label="Agent 时间线"></nav>
+    <main id="detail" aria-live="polite"></main>
+  </div>
+  <script>
+    "use strict";
+    let data = JSON.parse(document.getElementById("review-data").textContent);
+    let run = data?.run;
+    let handlersBound = false;
+    let catalog = [];
+    let loadSequence = 0;
+    const savedAnnotations = new Map();
+    let activeRunId = null;
+    let saveTimer = null;
+    let pendingSave = null;
+    let saveQueue = Promise.resolve();
+    let filter = "all";
+    let selected = 0;
+    let annotations = {};
+    let stepAnnotations = {};
+    function annotationDocument() {
+      return {task_id: run.task_id, branch: run.branch, run_path: run.path, annotations,
+        step_annotations: stepAnnotations};
+    }
+    function saveStatus(message) {
+      document.getElementById("save-status").textContent = message;
+    }
+    function scheduleSave() {
+      if (!activeRunId) return;
+      pendingSave = {runId: activeRunId, document: JSON.parse(JSON.stringify(annotationDocument()))};
+      saveStatus("保存中…");
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { void flushSave().catch(error => saveStatus(`保存失败：${error.message}`)); }, 400);
+    }
+    async function flushSave() {
+      if (saveTimer) clearTimeout(saveTimer);
+      saveTimer = null;
+      if (pendingSave) {
+        const pending = pendingSave;
+        pendingSave = null;
+        saveQueue = saveQueue.catch(() => {}).then(async () => {
+          const response = await fetch(`/api/annotations?run=${encodeURIComponent(pending.runId)}`, {
+            method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(pending.document),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || response.statusText);
+          if (pending.runId === activeRunId) saveStatus("已保存");
+        });
+      }
+      await saveQueue;
+    }
+    const text = value => value == null ? "未记录" : typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    function node(tag, className, value) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (value !== undefined) element.textContent = text(value);
+      return element;
+    }
+    function addFact(parent, label, value) {
+      const item = node("div", "fact", label);
+      item.appendChild(node("strong", "", value));
+      parent.appendChild(item);
+    }
+    function section(parent, title, value, open = false) {
+      const box = node("details");
+      box.open = open;
+      box.appendChild(node("summary", "", title));
+      const content = node("div", "content");
+      content.appendChild(node("pre", "", value));
+      box.appendChild(content);
+      parent.appendChild(box);
+    }
+    function positive(row) { return row.trigger_events.some(event => event.trigger_positive); }
+    function included(row) {
+      if (filter === "trigger" && !positive(row)) return false;
+      if (filter === "controller" && !row.controller_call) return false;
+      if (filter === "blocked" && row.event.execution_allowed !== false) return false;
+      const query = document.getElementById("search").value.trim().toLowerCase();
+      if (!query) return true;
+      const content = [row.event.generated_code, row.event.agent_output,
+        row.event.environment_observation, row.controller_call?.guidance,
+        row.controller_call?.reason].map(text).join(" ").toLowerCase();
+      return content.includes(query);
+    }
+    function renderTimeline() {
+      const list = document.getElementById("timeline");
+      list.replaceChildren();
+      const firstVisible = data.rows.findIndex(included);
+      if (selected < 0 || !data.rows[selected] || !included(data.rows[selected])) selected = firstVisible;
+      let visible = 0;
+      data.rows.forEach((row, index) => {
+        if (!included(row)) return;
+        visible += 1;
+        const event = row.event;
+        const button = node("button", index === selected ? "selected" : "");
+        button.type = "button";
+        const top = node("div", "row-top");
+        top.appendChild(node("strong", "", `Step ${event.step_number}`));
+        top.appendChild(node("span", "", event.agent_call_id || "Agent call 未记录"));
+        const badge = row.controller_call ? node("span", event.execution_allowed === false ? "badge block" : "badge", row.controller_call.action || "Controller")
+          : positive(row) ? node("span", "badge trigger", "触发阳性") : null;
+        if (badge) top.appendChild(badge);
+        if (stepAnnotations[event.agent_call_id]?.first_error) top.appendChild(node("span", "badge first-error", "首个偏差"));
+        button.appendChild(top);
+        const preview = (event.generated_code || event.agent_output || "无输出").trim();
+        button.appendChild(node("div", "row-preview", preview));
+        button.addEventListener("click", () => { selected = index; renderTimeline(); renderDetail(); });
+        list.appendChild(button);
+      });
+      if (!visible) list.appendChild(node("p", "empty", "没有符合筛选条件的步骤。"));
+    }
+    function addContext(parent, messages) {
+      const box = node("details");
+      box.appendChild(node("summary", "", `Agent 可见上下文 (${messages.length} 条)`));
+      const content = node("div", "content");
+      messages.forEach((message, index) => {
+        const line = node("div", "message");
+        line.appendChild(node("strong", "", `${index + 1}. ${message?.role || "unknown"}`));
+        line.appendChild(node("pre", "", message?.content === undefined ? message : message.content));
+        content.appendChild(line);
+      });
+      box.appendChild(content);
+      parent.appendChild(box);
+    }
+    function annotationField(parent, key, label, choices, record) {
+      const wrap = node("label", "", label);
+      const select = node("select");
+      choices.forEach(([value, name]) => {
+        const option = node("option", "", name);
+        option.value = value;
+        select.appendChild(option);
+      });
+      select.value = record[key] || "";
+      select.addEventListener("change", () => { record[key] = select.value; scheduleSave(); });
+      wrap.appendChild(select);
+      parent.appendChild(wrap);
+    }
+    function renderAnnotation(parent, call) {
+      const id = call.controller_call_id;
+      const record = annotations[id] || (annotations[id] = {});
+      const block = node("div", "annotation");
+      block.appendChild(node("h3", "", "人工审计标注"));
+      const grid = node("div", "annotation-grid");
+      annotationField(grid, "timing", "触发时机", [["", "未判断"], ["appropriate", "合适"], ["early", "过早"], ["late", "过晚"], ["unclear", "证据不足"]], record);
+      annotationField(grid, "decision", "判断依据", [["", "未判断"], ["supported", "有依据"], ["unsupported", "缺少依据"], ["incorrect", "判断有误"], ["unclear", "证据不足"]], record);
+      annotationField(grid, "guidance", "指导质量", [["", "未判断"], ["actionable", "可执行"], ["vague", "模糊"], ["overreaching", "越界"], ["harmful", "可能有害"], ["not_applicable", "未提供指导"]], record);
+      block.appendChild(grid);
+      const noteLabel = node("label", "", "证据与备注");
+      const note = node("textarea");
+      note.value = record.note || "";
+      note.addEventListener("input", () => { record.note = note.value; scheduleSave(); });
+      noteLabel.appendChild(note);
+      block.appendChild(noteLabel);
+      block.appendChild(node("p", "empty", activeRunId ? "标注自动保存到当前运行目录；导出可用于备份。" : "静态页面不能自动保存；请导出标注 JSON。"));
+      parent.appendChild(block);
+    }
+    function renderStepAnnotation(parent, event) {
+      const id = event.agent_call_id;
+      if (!id) return;
+      const record = stepAnnotations[id] || (stepAnnotations[id] = {});
+      const block = node("div", "annotation step-annotation");
+      block.appendChild(node("h3", "", "步骤审计"));
+      const firstLabel = node("label");
+      const first = node("input");
+      first.type = "checkbox";
+      first.checked = record.first_error === true;
+      first.addEventListener("change", () => {
+        if (first.checked) Object.values(stepAnnotations).forEach(item => { item.first_error = false; });
+        record.first_error = first.checked;
+        renderTimeline();
+        scheduleSave();
+      });
+      firstLabel.append(first, " 标记为最早可确认的决策偏差");
+      block.appendChild(firstLabel);
+      const noteLabel = node("label", "", "证据与原因");
+      const note = node("textarea");
+      note.value = record.note || "";
+      note.addEventListener("input", () => { record.note = note.value; scheduleSave(); });
+      noteLabel.appendChild(note);
+      block.appendChild(noteLabel);
+      parent.appendChild(block);
+    }
+    function renderDetail() {
+      const root = document.getElementById("detail");
+      root.replaceChildren();
+      const row = data.rows[selected];
+      if (!row) { root.appendChild(node("p", "empty", "没有可审阅的 Agent 调用。")); return; }
+      const event = row.event;
+      root.appendChild(node("h2", "", `Step ${event.step_number} · ${event.agent_call_id || "Agent call 未记录"}`));
+      const facts = node("div", "facts");
+      addFact(facts, "原动作", event.execution_allowed ? "已执行" : "未执行");
+      addFact(facts, "Controller", row.controller_call?.action || "未调用");
+      addFact(facts, "任务完成", event.task_completed === true ? "是" : "否");
+      addFact(facts, "Agent token", row.agent_tokens?.total_tokens);
+      if (row.controller_call) addFact(facts, "Controller token", row.controller_tokens?.total_tokens ?? row.controller_call.usage?.total_tokens);
+      root.appendChild(facts);
+      if (row.trigger_events.length) section(root, "Trigger 检测与预算状态", row.trigger_events);
+      if (row.controller_call) {
+        const call = row.controller_call;
+        const decision = node("div", "decision");
+        decision.appendChild(node("h3", "", `Controller · ${call.action}`));
+        decision.appendChild(node("p", "", call.reason));
+        if (call.guidance) {
+          decision.appendChild(node("h3", "", "注入 Agent 的指导"));
+          decision.appendChild(node("p", "", call.guidance));
+        }
+        root.appendChild(decision);
+      }
+      section(root, "Agent 完整输出", event.agent_output, !row.controller_call);
+      section(root, "拟执行代码", event.generated_code, !row.controller_call);
+      if (row.controller_call) {
+        const call = row.controller_call;
+        const input = call.controller_input || {};
+        section(root, "ControllerInput：任务、触发与拟执行动作", {
+          task: input.task, trigger_reason: input.trigger_reason, trigger_metadata: input.trigger_metadata,
+          proposed_agent_output: input.proposed_agent_output, proposed_execution: input.proposed_execution,
+          context_complete: input.context_complete, context_metadata: input.context_metadata,
+          previous_controller_decisions: input.previous_controller_decisions,
+        });
+        if (Array.isArray(input.agent_context_messages)) addContext(root, input.agent_context_messages);
+        section(root, "ControllerResponse 与原始响应", {controller_response: call.controller_response, raw_response: call.raw_response, usage: call.usage});
+        renderAnnotation(root, call);
+      }
+      section(root, "环境反馈", event.environment_observation, true);
+      renderStepAnnotation(root, event);
+      if (event.termination_reason) section(root, "终止原因", event.termination_reason, true);
+    }
+    function initialize() {
+      const metadata = document.getElementById("meta");
+      metadata.replaceChildren();
+      [run.task_id, run.branch, run.split, run.agent_model, run.controller_model].filter(Boolean)
+        .forEach(value => metadata.appendChild(node("span", "", value)));
+      const summary = document.getElementById("summary");
+      summary.replaceChildren();
+      [
+        `Agent 调用 ${data.rows.length}`,
+        `Controller 调用 ${data.rows.filter(row => row.controller_call).length}`,
+        `阻断 ${data.rows.filter(row => row.event.execution_allowed === false).length}`,
+        `官方评价 ${data.evaluator?.pending ? "待运行" : data.evaluator?.success ?? data.evaluator?.task_result?.success ?? "未记录"}`,
+      ].forEach(value => summary.appendChild(node("span", "", value)));
+      const warnings = document.getElementById("warnings");
+      warnings.replaceChildren();
+      data.warnings.forEach(message => warnings.appendChild(node("div", "warning", message)));
+      const links = node("div", "links");
+      Object.entries(data.raw_links).forEach(([name, href]) => {
+        const link = node("a", "", name);
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noopener";
+        links.appendChild(link);
+      });
+      const source = document.getElementById("source-info");
+      source.replaceChildren();
+      const provenance = node("details");
+      provenance.appendChild(node("summary", "", "原始日志与官方评价"));
+      provenance.appendChild(links);
+      section(provenance, "运行信息与结果", {path: run.path, manifest: data.manifest, result: data.result, evaluator: data.evaluator});
+      source.appendChild(provenance);
+      if (!handlersBound) {
+      handlersBound = true;
+      document.querySelectorAll("[data-filter]").forEach(button => button.addEventListener("click", () => {
+        filter = button.dataset.filter;
+        document.querySelectorAll("[data-filter]").forEach(item => item.classList.toggle("active", item === button));
+        renderTimeline();
+        renderDetail();
+      }));
+      document.getElementById("search").addEventListener("input", () => { renderTimeline(); renderDetail(); });
+      document.getElementById("export").addEventListener("click", () => {
+        const output = annotationDocument();
+        const url = URL.createObjectURL(new Blob([JSON.stringify(output, null, 2)], {type: "application/json"}));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `${run.task_id}__${run.branch}__annotations.json`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+      document.getElementById("import-button").addEventListener("click", () => document.getElementById("import-file").click());
+      document.getElementById("import-file").addEventListener("change", async event => {
+        const file = event.target.files[0];
+        if (!file) return;
+        try {
+          const imported = JSON.parse(await file.text());
+          if (imported.task_id !== run.task_id || imported.branch !== run.branch || imported.run_path !== run.path ||
+              !imported.annotations || typeof imported.annotations !== "object" || Array.isArray(imported.annotations)) {
+            throw new Error("标注文件与当前轨迹不匹配");
+          }
+          annotations = imported.annotations;
+          stepAnnotations = imported.step_annotations || {};
+          renderDetail();
+          renderTimeline();
+          scheduleSave();
+        } catch (error) { alert(`无法导入标注：${error.message}`); }
+        event.target.value = "";
+      });
+      }
+      renderTimeline();
+      renderDetail();
+    }
+    function options(id, items, preferred) {
+      const select = document.getElementById(id);
+      select.replaceChildren();
+      items.forEach(([value, label]) => {
+        const option = node("option", "", label);
+        option.value = value;
+        select.appendChild(option);
+      });
+      if (items.some(([value]) => value === preferred)) select.value = preferred;
+    }
+    function showError(error) {
+      document.getElementById("catalog-status").textContent = `无法读取：${error.message}`;
+    }
+    async function loadSelectedRun() {
+      const id = document.getElementById("run-select").value;
+      if (!id) return;
+      const sequence = ++loadSequence;
+      try {
+        await flushSave();
+      } catch (error) {
+        document.getElementById("run-select").value = activeRunId;
+        saveStatus(`保存失败：${error.message}`);
+        return;
+      }
+      if (sequence !== loadSequence) return;
+      if (run) savedAnnotations.set(run.path, {annotations, stepAnnotations});
+      document.querySelectorAll(".toolbar button, .toolbar input").forEach(element => element.disabled = true);
+      document.getElementById("meta").replaceChildren();
+      document.getElementById("summary").replaceChildren();
+      document.getElementById("source-info").replaceChildren();
+      document.getElementById("timeline").replaceChildren();
+      document.getElementById("warnings").replaceChildren();
+      document.getElementById("detail").replaceChildren(node("p", "empty", "正在读取轨迹…"));
+      try {
+        const [response, annotationResponse] = await Promise.all([
+          fetch(`/api/run?run=${encodeURIComponent(id)}`),
+          fetch(`/api/annotations?run=${encodeURIComponent(id)}`),
+        ]);
+        const [next, stored] = await Promise.all([response.json(), annotationResponse.json()]);
+        if (sequence !== loadSequence) return;
+        if (!response.ok) throw new Error(next.error || response.statusText);
+        if (!annotationResponse.ok) throw new Error(stored.error || annotationResponse.statusText);
+        if (stored && (stored.task_id !== next.run.task_id || stored.branch !== next.run.branch ||
+            stored.run_path !== next.run.path || !stored.annotations || typeof stored.annotations !== "object")) {
+          throw new Error("已保存的标注与当前轨迹不匹配");
+        }
+        data = next;
+        run = data.run;
+        activeRunId = id;
+        const cached = savedAnnotations.get(run.path);
+        annotations = stored?.annotations || cached?.annotations || {};
+        stepAnnotations = stored?.step_annotations || cached?.stepAnnotations || {};
+        saveStatus(stored ? "已读取标注" : "尚无标注");
+        selected = 0;
+        filter = "all";
+        document.getElementById("search").value = "";
+        document.querySelectorAll("[data-filter]").forEach(button => button.classList.toggle("active", button.dataset.filter === "all"));
+        document.getElementById("catalog-status").textContent = "";
+        history.replaceState(null, "", `?run=${encodeURIComponent(id)}`);
+        initialize();
+        document.querySelectorAll(".toolbar button, .toolbar input").forEach(element => element.disabled = false);
+      } catch (error) {
+        if (sequence !== loadSequence) return;
+        document.getElementById("timeline").replaceChildren();
+        document.getElementById("detail").replaceChildren(node("p", "empty", "该轨迹暂不可读取，请检查数据或选择其他运行。"));
+        showError(error);
+      }
+    }
+    function updateRuns(preferred) {
+      const experiment = document.getElementById("experiment-select").value;
+      const task = document.getElementById("task-select").value;
+      const runs = catalog.filter(item => item.experiment === experiment && item.task_id === task);
+      options("run-select", runs.map(item => [item.id, [item.branch, item.checkpoint_id].filter(Boolean).join(" · ")]), preferred);
+      loadSelectedRun();
+    }
+    function updateTasks(preferredTask, preferredRun) {
+      const experiment = document.getElementById("experiment-select").value;
+      const tasks = [...new Set(catalog.filter(item => item.experiment === experiment).map(item => item.task_id))];
+      options("task-select", tasks.map(task => [task, task]), preferredTask);
+      updateRuns(preferredRun);
+    }
+    async function refreshCatalog() {
+      try {
+        const response = await fetch("/api/runs");
+        if (!response.ok) throw new Error(response.statusText);
+        const result = await response.json();
+        catalog = result.runs;
+        const preferred = new URLSearchParams(location.search).get("run");
+        const selectedRun = catalog.find(item => item.id === preferred);
+        const experiments = [...new Set(catalog.map(item => item.experiment))];
+        options("experiment-select", experiments.map(name => [name, name]), selectedRun?.experiment);
+        if (!catalog.length) {
+          document.getElementById("catalog-status").textContent = "当前没有可读取的实验轨迹。";
+          return;
+        }
+        updateTasks(selectedRun?.task_id, selectedRun?.id);
+        if (result.errors.length) showError(new Error(result.errors.join("; ")));
+      } catch (error) { showError(error); }
+    }
+    if (data) initialize();
+    else {
+      document.getElementById("picker").hidden = false;
+      document.getElementById("experiment-select").addEventListener("change", () => updateTasks());
+      document.getElementById("task-select").addEventListener("change", () => updateRuns());
+      document.getElementById("run-select").addEventListener("change", loadSelectedRun);
+      document.getElementById("refresh-catalog").addEventListener("click", refreshCatalog);
+      refreshCatalog();
+    }
+  </script>
+</body>
+</html>

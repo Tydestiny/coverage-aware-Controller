@@ -1,6 +1,6 @@
 # Historical Study Migration
 
-The historical study is stored at `D:\TY\SJTU\CIS\controller_study_archive_2026`, outside both Git repositories. The official AppWorld dataset remains in the AppWorld checkout and was not moved. The archive contains 50,697 files (1,350,367,599 bytes), a per-file `files.sha256.jsonl` index, `archive_manifest.json`, and `source_snapshot_HEAD.zip` for the old tracked code.
+The historical study is stored in an external archive outside both Git repositories. Pass its location explicitly with `experiment.py list --archive-root <ARCHIVE_ROOT>`. The official AppWorld dataset was not moved. The archive preserves the per-file `files.sha256.jsonl` index, `archive_manifest.json`, and `source_snapshot_HEAD.zip`.
 
 | Old location | Archived location | Active location |
 | --- | --- | --- |

@@ -29,6 +29,7 @@ artifacts/
 # Keep source modules named "results"; only runtime result directories are ignored.
 !controller_agent/results/
 !controller_agent/results/*.py
+!controller_agent/results/reviewer.html
 outputs/
 checkpoints/
 branch_runs/

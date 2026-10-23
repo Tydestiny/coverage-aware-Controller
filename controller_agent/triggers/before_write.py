@@ -2,8 +2,7 @@
 
 The keyword set, params preview cap, and other tunables live in
 :mod:`controller_agent.triggers.config`.  When the trigger is instantiated
-without an explicit config, the package defaults are used so behaviour
-matches the historically hard-coded values.
+without an explicit config, the current package defaults are used.
 """
 
 from __future__ import annotations
@@ -14,7 +13,9 @@ from controller_agent.state.schemas import TriggerContext, TriggerResult
 from controller_agent.triggers.code import python_spans
 from controller_agent.triggers.config import DEFAULT_CONFIG, BeforeWriteConfig
 
-def _extract_api_call(code: str, keywords: frozenset[str]) -> tuple[str, ast.Call] | None:
+def _extract_api_call(
+    code: str, keywords: frozenset[str], read_only_api_names: frozenset[str],
+) -> tuple[str, ast.Call] | None:
     """Find the first high-risk AppWorld API call in parsed Python code."""
     try:
         tree = ast.parse(code)
@@ -33,6 +34,8 @@ def _extract_api_call(code: str, keywords: frozenset[str]) -> tuple[str, ast.Cal
             parts.append(target.id)
         parts.reverse()
         if len(parts) < 3 or parts[0] != "apis":
+            continue
+        if ".".join(parts[1:]).lower() in read_only_api_names:
             continue
         for part in parts[-1].split("_"):
             if part.lower() in keywords:
@@ -60,7 +63,9 @@ class BeforeWriteTrigger:
             return TriggerResult(False, "before_write_empty_execution")
 
         for source, _ in python_spans(code):
-            matched = _extract_api_call(source, self._config.high_risk_keywords)
+            matched = _extract_api_call(
+                source, self._config.high_risk_keywords, self._config.read_only_api_names,
+            )
             if matched is None:
                 continue
             api_name, call = matched

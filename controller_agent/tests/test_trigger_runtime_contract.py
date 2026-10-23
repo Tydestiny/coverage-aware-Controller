@@ -7,7 +7,7 @@ from controller_agent.state.schemas import TriggerContext
 from controller_agent.triggers.before_write import BeforeWriteTrigger
 from controller_agent.triggers.before_finish import BeforeFinishTrigger
 from controller_agent.triggers.composite import CompositeTriggerDetectorWithBudget
-from controller_agent.triggers.config import TriggerBudgetConfig, TriggerConfig
+from controller_agent.triggers.config import BeforeWriteConfig, TriggerBudgetConfig, TriggerConfig
 from controller_agent.logging.logger import summarize_trigger_events
 
 
@@ -20,6 +20,72 @@ def test_before_write_finds_later_api_call_without_matching_comments() -> None:
     assert trigger.detect(context('print("ready")\napis.spotify.delete_playlist(playlist_id=12)')).should_call_controller
     assert not trigger.detect(context('# apis.spotify.delete_playlist(playlist_id=12)\nprint("ready")')).should_call_controller
     assert not trigger.detect(context('print("apis.spotify.delete_playlist(playlist_id=12)")')).should_call_controller
+
+
+@pytest.mark.parametrize("api_name", [
+    "spotify.like_song", "spotify.unlike_song", "spotify.like_playlist",
+    "venmo.like_transaction", "gmail.mark_thread_starred",
+    "spotify.clear_song_queue", "file_system.copy_file", "file_system.move_file",
+    "todoist.assign_or_unassign_task", "venmo.approve_payment_request",
+    "venmo.deny_payment_request", "splitwise.record_payment",
+    "gmail.reply_to_email", "amazon.place_order", "spotify.play_music",
+    "spotify.download_song", "todoist.upload_attachment",
+    "file_system.compress_directory", "gmail.forward_email_thread",
+    "splitwise.accept_group_invitation",
+])
+def test_before_write_covers_additional_state_mutations(api_name: str) -> None:
+    result = BeforeWriteTrigger().detect(context(f"apis.{api_name}()"))
+    assert result.should_call_controller
+    assert result.reason == "before_write"
+
+
+@pytest.mark.parametrize("api_name", [
+    "amazon.download_order_receipt", "amazon.download_prime_subscription_receipt",
+    "amazon.show_last_product_purchase",
+    "gmail.download_attachment", "splitwise.download_expense_receipt_file",
+    "splitwise.download_payment_receipt_file", "spotify.show_song_review",
+    "spotify.show_album_review", "spotify.show_playlist_review",
+    "spotify.download_premium_subscription_receipt", "todoist.show_label",
+    "todoist.download_attachment", "venmo.download_bank_transfer_receipt",
+    "venmo.download_transaction_receipt", "spotify.show_liked_songs",
+    "spotify.search_artists", "api_docs.show_api_doc", "spotify.login",
+])
+def test_before_write_does_not_classify_read_or_login_as_mutation(api_name: str) -> None:
+    assert not BeforeWriteTrigger().detect(context(f"apis.{api_name}()")).should_call_controller
+
+
+def test_before_write_detects_like_inside_loop_but_not_text() -> None:
+    trigger = BeforeWriteTrigger()
+    code = 'for song in queue:\n    apis.spotify.like_song(song_id=song["song_id"])'
+    assert trigger.detect(context(code)).should_call_controller
+    assert not trigger.detect(context('# apis.spotify.like_song(song_id=8)')).should_call_controller
+    assert not trigger.detect(context('print("apis.spotify.like_song(song_id=8)")')).should_call_controller
+
+
+def test_before_write_skips_read_only_api_before_write_and_preserves_preview() -> None:
+    code = 'apis.spotify.show_song_review(song_id=1)\napis.spotify.like_song(song_id=8)'
+    result = BeforeWriteTrigger().detect(context(code))
+    assert result.should_call_controller
+    assert result.metadata["api_name"] == "like"
+    assert result.metadata["params_preview"] == "(song_id=8)"
+
+
+def test_additional_write_still_obeys_composite_budget() -> None:
+    detector = CompositeTriggerDetectorWithBudget(full_config=TriggerConfig(
+        budget=TriggerBudgetConfig(detector_order=("before_write",),
+                                   max_triggers_per_task=1, min_before_finish_triggers=0)
+    ))
+    assert detector.detect(context("apis.spotify.like_song(song_id=1)")).should_call_controller
+    result = detector.detect(context("apis.spotify.like_song(song_id=2)"))
+    assert not result.should_call_controller
+    assert result.metadata["trigger_positive"] is True
+    assert result.metadata["budget_bypassed"] is True
+
+
+def test_before_write_keyword_override_remains_effective() -> None:
+    trigger = BeforeWriteTrigger(BeforeWriteConfig(high_risk_keywords=frozenset({"delete"})))
+    assert trigger.detect(context("apis.spotify.delete_playlist(playlist_id=1)")).should_call_controller
+    assert not trigger.detect(context("apis.spotify.like_song(song_id=1)")).should_call_controller
 
 
 def test_before_finish_ignores_comment_and_string_mentions() -> None:

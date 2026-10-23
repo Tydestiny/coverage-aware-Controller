@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.analyze_branch_experiment import analyze
 
 
@@ -91,3 +93,42 @@ def test_groups_missing_fields_duplicates_and_seed_pairing(tmp_path: Path) -> No
     assert len(payload["data_quality"]["duplicate_branches"]) == 1
     assert any(row["task_id"] == "seed_task" and row["seed"] == "42" for row in payload["rows"])
     assert any(row["task_id"] == "challenge_task" and row["controller_triggered"] is False for row in payload["rows"])
+
+
+def test_referenced_baseline_is_paired_read_only(tmp_path: Path) -> None:
+    """Prompt iterations reuse an explicit baseline without copying or changing it."""
+    old = tmp_path / "old"
+    new = tmp_path / "new"
+    _branch(old, "task", "baseline", run_id=None, seed="42", success=False)
+    source = old / "runs" / "task_baseline_42"
+    before = {p.name: p.read_bytes() for p in source.iterdir()}
+    _write_json(new / "manifest.json", {"baseline_references": [{"task_id": "task", "run_path": str(source)}]})
+    _branch(new, "task", "controller", run_id=None, seed="42", calls=[{"usage": {"total_tokens": 4}}])
+    result = analyze(new, tmp_path / "analysis")
+    assert result["summary"]["overall"]["task_count"] == 1
+    assert result["rows"][0]["outcome_category"] == "fail_to_success"
+    assert result["rows"][0]["baseline_run_path"] == str(source.resolve())
+    assert {p.name: p.read_bytes() for p in source.iterdir()} == before
+
+
+def test_referenced_baseline_identity_must_match(tmp_path: Path) -> None:
+    """A reference cannot silently substitute another task or a Controller run."""
+    old, new = tmp_path / "old", tmp_path / "new"
+    _branch(old, "wrong_task", "baseline")
+    _write_json(new / "manifest.json", {"baseline_references": [{
+        "task_id": "task", "run_path": str(old / "runs" / "wrong_task_baseline_r1"),
+    }]})
+    with pytest.raises(ValueError, match="identity mismatch"):
+        analyze(new, tmp_path / "analysis")
+
+
+def test_duplicate_baseline_references_are_not_counted(tmp_path: Path) -> None:
+    """Duplicate references are surfaced by the existing pairing quality checks."""
+    old, new = tmp_path / "old", tmp_path / "new"
+    _branch(old, "task", "baseline")
+    ref = {"task_id": "task", "run_path": str(old / "runs" / "task_baseline_r1")}
+    _write_json(new / "manifest.json", {"baseline_references": [ref, ref]})
+    _branch(new, "task", "controller", calls=[])
+    result = analyze(new, tmp_path / "analysis")
+    assert result["summary"]["overall"]["task_count"] == 0
+    assert len(result["data_quality"]["duplicate_branches"]) == 1

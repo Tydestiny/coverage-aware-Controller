@@ -2,9 +2,8 @@
 
 This module is the single source of truth for every tunable knob that the
 trigger detectors (and their integration tests) consume.  Per-trigger dataclasses
-let callers override only the fields they care about while keeping sensible
-defaults that match the values historically embedded in the triggers and the
-test harness.
+let callers override only the fields they care about while keeping explicit
+defaults for the current rule version.
 
 Loading strategy:
 - The default values declared here are the authoritative defaults.
@@ -52,11 +51,37 @@ class BeforeWriteConfig:
             "delete", "update", "write", "create", "send", "pay",
             "purchase", "follow", "unfollow", "cancel", "remove",
             "modify", "set", "add", "block", "unblock",
+            "accept", "apply", "approve", "assign", "attach", "clear",
+            "compress", "copy", "decompress", "deny", "download", "exit",
+            "forward", "initiate", "label", "like", "loop", "mark", "move",
+            "next", "pause", "place", "play", "post", "previous", "record",
+            "regenerate", "remind", "reply", "review", "seek", "settle",
+            "shuffle", "snooze", "subscribe", "undelete", "unlabel", "unlike",
+            "unsnooze", "upload", "withdraw",
         })
     )
 
     # Cap on the params preview stored in trigger metadata.
     params_preview_limit: int = 200
+
+    # Public GET endpoints whose names contain a mutation keyword. Receipt
+    # downloads return data; spotify.download_song changes library state.
+    read_only_api_names: frozenset[str] = field(
+        default_factory=lambda: frozenset({
+            "amazon.download_order_receipt",
+            "amazon.download_prime_subscription_receipt",
+            "amazon.show_last_product_purchase",
+            "gmail.download_attachment",
+            "splitwise.download_expense_receipt_file",
+            "splitwise.download_payment_receipt_file",
+            "spotify.show_song_review", "spotify.show_album_review",
+            "spotify.show_playlist_review",
+            "spotify.download_premium_subscription_receipt",
+            "todoist.show_label", "todoist.download_attachment",
+            "venmo.download_bank_transfer_receipt",
+            "venmo.download_transaction_receipt",
+        })
+    )
 
 
 # ── NoProgressTrigger ─────────────────────────────────────────────────────────

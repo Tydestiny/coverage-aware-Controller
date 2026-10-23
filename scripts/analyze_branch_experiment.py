@@ -67,7 +67,7 @@ def _as_text(value: Any) -> str | None:
 
 
 def discover_runs(experiment_root: Path) -> list[RunRecord]:
-    """Discover baseline and Controller result directories under an experiment root."""
+    """Read local runs and explicitly referenced, unchanged baseline runs."""
     root_manifest_path = experiment_root / "manifest.json"
     root_manifest = read_json(root_manifest_path) if root_manifest_path.is_file() else {}
     records: list[RunRecord] = []
@@ -90,6 +90,22 @@ def discover_runs(experiment_root: Path) -> list[RunRecord]:
         run_id = _as_text(_first_value(manifest, result, root_manifest, keys=("run_id",)))
         seed = _as_text(_first_value(manifest, result, root_manifest, keys=("seed", "random_seed")))
         records.append(RunRecord(path, root_manifest, manifest, result, evaluator, branch, task_id, split, run_id, seed))
+    for reference in root_manifest.get("baseline_references", []):
+        source = Path(reference["run_path"])
+        path = source.resolve() if source.is_absolute() else (experiment_root / source).resolve()
+        manifest = read_json(path / "manifest.json")
+        result = read_json(path / "result.json")
+        if manifest.get("branch") != "baseline" or manifest.get("task_id") != reference["task_id"]:
+            raise ValueError(f"Baseline reference identity mismatch: {path}")
+        evaluator_path = path / "evaluator_result.json"
+        records.append(RunRecord(
+            path, root_manifest, manifest, result,
+            read_json(evaluator_path) if evaluator_path.is_file() else {},
+            "baseline", reference["task_id"],
+            _as_text(_first_value(manifest, result, keys=("split", "dataset_split"))),
+            _as_text(_first_value(manifest, result, keys=("run_id",))),
+            _as_text(_first_value(manifest, result, keys=("seed", "random_seed"))),
+        ))
     return records
 
 
@@ -231,6 +247,8 @@ def paired_task_row(baseline: RunRecord, controller: RunRecord) -> dict[str, Any
         "token_delta": _delta(baseline_tokens["total"], controller_tokens["total"]),
         "agent_model": agent_model,
         "controller_model": controller_model,
+        "baseline_run_path": str(baseline.path),
+        "controller_run_path": str(controller.path),
     }
 
 

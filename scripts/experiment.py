@@ -41,6 +41,13 @@ def parser() -> argparse.ArgumentParser:
     prepare.add_argument("--seed", type=int, default=20260722)
     listing = sub.add_parser("list")
     listing.add_argument("--archive-root", type=Path)
+    review = sub.add_parser("review", help="Review trajectories locally and save per-run annotations")
+    review.add_argument("--experiment-id")
+    review.add_argument("--task-id")
+    review.add_argument("--branch")
+    review.add_argument("--output", type=Path)
+    review.add_argument("--serve", action="store_true", help="Browse all active experiments locally")
+    review.add_argument("--port", type=int, default=8765)
     run = sub.add_parser("run")
     run.add_argument("scenario", nargs="?", choices=("initial", "checkpoint"), default="initial")
     run.add_argument("--split", choices=("train", "dev"), required=True)
@@ -115,6 +122,23 @@ def main(argv: list[str] | None = None) -> int:
                                    "controller_success": summary.get("overall", {}).get("controller_success_count"),
                                    "path": str(summary_file)})
         print(json.dumps({"active_runs": runs, "historical_summaries": historical}, indent=2))
+        return 0
+    if args.command == "review":
+        if args.serve:
+            from controller_agent.results.review_server import serve_reviews
+
+            serve_reviews(artifacts, args.port)
+            return 0
+        if not all((args.experiment_id, args.task_id, args.branch)):
+            raise ValueError("Use review --serve, or provide --experiment-id, --task-id and --branch")
+        from controller_agent.results.reviewer import write_review_page
+
+        source = run_path(args.experiment_id, args.task_id, args.branch, artifacts)
+        destination = args.output or artifacts / "reviews" / f"{args.experiment_id}__{args.task_id}__{args.branch}.html"
+        if destination.resolve().is_relative_to(source.resolve()):
+            raise ValueError("Review page must not be written into the source run directory")
+        page = write_review_page(source, destination)
+        print(json.dumps({"review_page": str(page), "source_run": str(source)}, indent=2))
         return 0
     if args.command == "analyze":
         if not _IDENTIFIER.fullmatch(args.experiment_id):

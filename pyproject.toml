@@ -19,3 +19,6 @@ pythonpath = ["."]
 
 [tool.setuptools.packages.find]
 include = ["controller_agent*"]
+
+[tool.setuptools.package-data]
+"controller_agent.results" = ["reviewer.html"]
